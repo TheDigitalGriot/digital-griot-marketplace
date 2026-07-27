@@ -1,0 +1,17 @@
+{
+  "name": "digital-griot-marketplace",
+  "owner": {
+    "name": "Digital Griot Studio"
+  },
+  "metadata": {
+    "description": "TheDigitalGriot's unified plugin marketplace — thin per-tool plugin folders (prism, cinopsis, ...) synced from each tool's own repo on release. One marketplace, every Griot tool. Each entry uses a spec-valid relative './<tool>-plugin' source; the repo stays small so the Claude Desktop / Cowork remote backend clones it fast."
+  },
+  "plugins": [
+    {
+      "name": "prism",
+      "source": "./prism-plugin",
+      "description": "Structured 6-phase development workflow (Ideate -> Research -> Plan -> Design -> Implement -> Validate)",
+      "version": "4.5.9"
+    }
+  ]
+}
