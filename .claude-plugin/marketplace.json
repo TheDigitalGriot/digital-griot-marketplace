@@ -10,7 +10,7 @@
     {
       "name": "prism",
       "source": "./prism-plugin",
-      "description": "Structured 6-phase development workflow (Ideate -> Research -> Plan -> Design -> Implement -> Validate)",
+      "description": "Structured 6-phase development workflow (Ideate -> Research -> Plan -> Design -> Implement -> Validate) with Spectrum-style iterative execution with TUI",
       "version": "4.5.9"
     }
   ]
