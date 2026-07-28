@@ -8,6 +8,12 @@
   },
   "plugins": [
     {
+      "name": "cinopsis",
+      "source": "./cinopsis-plugin",
+      "description": "Cinopsis â€” browse subscribed YouTube channels, fetch transcripts, and generate Markdown summary digests. Multi-video comparison with an interactive dashboard, frame screenshots, and AI chat. Runs on Claude Code and Cowork.",
+      "version": "2.1.4"
+    },
+    {
       "name": "prism",
       "source": "./prism-plugin",
       "description": "Structured 6-phase development workflow (Ideate -> Research -> Plan -> Design -> Implement -> Validate) with Spectrum-style iterative execution with TUI",

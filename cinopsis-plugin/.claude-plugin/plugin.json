@@ -1,0 +1,29 @@
+{
+  "name": "cinopsis",
+  "description": "Cinopsis â€” browse subscribed YouTube channels, fetch transcripts, and generate Markdown summary digests. Multi-video comparison with an interactive dashboard, frame screenshots, and AI chat. Runs on Claude Code and Cowork.",
+  "version": "2.1.4",
+  "author": {
+    "name": "Digital Griot Studio"
+  },
+  "keywords": ["youtube", "video", "digest", "transcript", "summary", "comparison", "analysis"],
+  "userConfig": {
+    "anthropic_api_key": {
+      "type": "string",
+      "title": "Anthropic API Key",
+      "description": "Anthropic API key â€” fallback for the in-viewer chat when the Claude CLI isn't available (e.g. on Cowork). Leave blank to use your Claude subscription via the CLI.",
+      "sensitive": true
+    },
+    "local_base_url": {
+      "type": "string",
+      "title": "Local Model Base URL",
+      "description": "OpenAI-compatible base URL for local/custom chat models (e.g. http://localhost:11434/v1 for Ollama). Optional.",
+      "sensitive": false
+    },
+    "local_model": {
+      "type": "string",
+      "title": "Local Model Name",
+      "description": "Model name for the local/custom OpenAI-compatible endpoint (e.g. your fine-tune, gemma3, kimi-k2). Optional.",
+      "sensitive": false
+    }
+  }
+}
