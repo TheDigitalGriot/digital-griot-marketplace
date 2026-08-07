@@ -1,7 +1,22 @@
+// prism-gavel popout server — a copy of prism-brainstorm/scripts/server.cjs.
+//
+// Functionally identical to brainstorm's server: HTTP + hand-rolled WebSocket (RFC 6455)
+// on a random high port (49152 + random(16383)), fed by GAVEL_* env from start-server.sh.
+// The ONLY shared thing with brainstorm is the wake channel on :52342 — this server gets
+// its own random port, so the two popouts never collide.
+//
+// Gavel deltas vs. brainstorm's server.cjs:
+//   • Env prefix GAVEL_* (own session dir under .prism/local/gavel/).
+//   • Serves frame.html (the lifted cockpit) as the default screen instead of a waiting page.
+//   • WS handler logs verb events (event.verb) as well as brainstorm-style choice events.
+//   • Channel meta tag names stay `brainstorm-channel-port` / `brainstorm-session-id` — that
+//     is the port CONTRACT the shared channel + helper.js discovery depend on (do not rename).
+
 const crypto = require('crypto');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { render: griotRender } = require('../../../packages/griot-widget/render.cjs');
 
 // ========== WebSocket Protocol (RFC 6455) ==========
 
@@ -73,15 +88,15 @@ function decodeFrame(buffer) {
 
 // ========== Configuration ==========
 
-const PORT = process.env.BRAINSTORM_PORT || (49152 + Math.floor(Math.random() * 16383));
-const HOST = process.env.BRAINSTORM_HOST || '127.0.0.1';
-const URL_HOST = process.env.BRAINSTORM_URL_HOST || (HOST === '127.0.0.1' ? 'localhost' : HOST);
-const SESSION_DIR = process.env.BRAINSTORM_DIR || '/tmp/prism-brainstorm';
+const PORT = process.env.GAVEL_PORT || (49152 + Math.floor(Math.random() * 16383));
+const HOST = process.env.GAVEL_HOST || '127.0.0.1';
+const URL_HOST = process.env.GAVEL_URL_HOST || (HOST === '127.0.0.1' ? 'localhost' : HOST);
+const SESSION_DIR = process.env.GAVEL_DIR || '/tmp/prism-gavel';
 const CONTENT_DIR = path.join(SESSION_DIR, 'content');
 const STATE_DIR = path.join(SESSION_DIR, 'state');
-const CHANNEL_PORT = process.env.BRAINSTORM_CHANNEL_PORT || '52342';
+const CHANNEL_PORT = process.env.GAVEL_CHANNEL_PORT || process.env.BRAINSTORM_CHANNEL_PORT || '52342';
 const SESSION_ID = path.basename(SESSION_DIR);
-let ownerPid = process.env.BRAINSTORM_OWNER_PID ? Number(process.env.BRAINSTORM_OWNER_PID) : null;
+let ownerPid = process.env.GAVEL_OWNER_PID ? Number(process.env.GAVEL_OWNER_PID) : null;
 
 const MIME_TYPES = {
   '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
@@ -91,16 +106,20 @@ const MIME_TYPES = {
 
 // ========== Templates and Constants ==========
 
+// Fallback only — shown if frame.html is somehow missing.
 const WAITING_PAGE = `<!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>Prism Brainstorm Companion</title>
+<head><meta charset="utf-8"><title>Prism Gavel Cockpit</title>
 <style>body { font-family: system-ui, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; }
 h1 { color: #333; } p { color: #666; }</style>
 </head>
-<body><h1>Prism Brainstorm Companion</h1>
-<p>Waiting for the agent to push a screen...</p></body></html>`;
+<body><h1>Prism Gavel Cockpit</h1>
+<p>frame.html not found — the cockpit could not be served.</p></body></html>`;
 
-const frameTemplate = fs.readFileSync(path.join(__dirname, 'frame-template.html'), 'utf-8');
+// The cockpit. Gavel serves this directly as the default screen (unlike brainstorm, which
+// wraps Claude-pushed partial screens). If S4 pushes a live-state screen into CONTENT_DIR,
+// getNewestScreen() takes precedence and this is the fallback default.
+const frameHtml = fs.readFileSync(path.join(__dirname, 'frame.html'), 'utf-8');
 const helperScript = fs.readFileSync(path.join(__dirname, 'helper.js'), 'utf-8');
 const helperInjection = '<script>\n' + helperScript + '\n</script>';
 
@@ -122,16 +141,15 @@ function injectChannelMeta(html) {
   return channelMetaTags + '\n' + html;
 }
 
-// GMCL-C5 · Brainstorm now consumes the shared griot-widget render() primitive. injectMeta preserves
-// Brainstorm's exact channel meta, so output is byte-identical to the pre-extraction wrapInFrame
-// (proven by packages/griot-widget/test.cjs + the on-device real-template equivalence check).
-const { render: griotRender } = require('../../../packages/griot-widget/render.cjs');
-
 function wrapInFrame(content) {
-  return griotRender(content, { template: frameTemplate, injectMeta: injectChannelMeta });
+  // GMCL-B1: delegate to the shared griot-widget render() primitive. Byte-identical to the
+  // old inline wrap (frame.html has no <!-- CONTENT --> placeholder -> the slot-replace is a
+  // no-op and injectChannelMeta runs exactly as before), proven by adapter.test.cjs.
+  return griotRender(content, { template: frameHtml, injectMeta: injectChannelMeta });
 }
 
 function getNewestScreen() {
+  if (!fs.existsSync(CONTENT_DIR)) return null;
   const files = fs.readdirSync(CONTENT_DIR)
     .filter(f => f.endsWith('.html'))
     .map(f => {
@@ -148,12 +166,16 @@ function handleRequest(req, res) {
   touchActivity();
   if (req.method === 'GET' && req.url === '/') {
     const screenFile = getNewestScreen();
-    let html = screenFile
-      ? (raw => isFullDocument(raw) ? injectChannelMeta(raw) : wrapInFrame(raw))(fs.readFileSync(screenFile, 'utf-8'))
-      : injectChannelMeta(WAITING_PAGE);
+    const raw = screenFile ? fs.readFileSync(screenFile, 'utf-8') : (frameHtml || WAITING_PAGE);
+    let html = isFullDocument(raw) ? injectChannelMeta(raw) : wrapInFrame(raw);
 
-    if (html.includes('</body>')) {
-      html = html.replace('</body>', helperInjection + '\n</body>');
+    // Inject before the LAST </body>, not the first. frame.html's header comment
+    // contains the literal string "</body>" (it documents this very injection), and
+    // String.replace(str, ...) only substitutes the FIRST match — which buried the
+    // helper inside a CSS comment and silently killed the entire drive loop.
+    const bodyClose = html.lastIndexOf('</body>');
+    if (bodyClose !== -1) {
+      html = html.slice(0, bodyClose) + helperInjection + '\n' + html.slice(bodyClose);
     } else {
       html += helperInjection;
     }
@@ -165,6 +187,17 @@ function handleRequest(req, res) {
     const body = fs.existsSync(decisionsFile)
       ? fs.readFileSync(decisionsFile, 'utf-8')
       : '{"decisions":[],"parked":[]}';
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(body);
+  } else if (req.method === 'GET' && req.url === '/state/gavel-cards.json') {
+    // S4: live shelf. gavel_state (digital-griot-mcp) parses ITEMS/RESOLVE from the plan
+    // at git HEAD and writes this file into STATE_DIR; the cockpit fetches it to hydrate
+    // its deck (replacing the S3 baked-ITEMS stopgap). Missing file → empty shell so the
+    // cockpit falls back to its baked snapshot.
+    const cardsFile = path.join(STATE_DIR, 'gavel-cards.json');
+    const body = fs.existsSync(cardsFile)
+      ? fs.readFileSync(cardsFile, 'utf-8')
+      : '{"ok":false,"cards":[],"resolve":[]}';
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(body);
   } else if (req.method === 'GET' && req.url.startsWith('/files/')) {
@@ -256,7 +289,8 @@ function handleMessage(text) {
   }
   touchActivity();
   console.log(JSON.stringify({ source: 'user-event', ...event }));
-  if (event.choice) {
+  // Log brainstorm-style choice events AND gavel verb events to the events file.
+  if (event.choice || event.verb) {
     const eventsFile = path.join(STATE_DIR, 'events');
     fs.appendFileSync(eventsFile, JSON.stringify(event) + '\n');
   }
@@ -288,9 +322,6 @@ function startServer() {
   if (!fs.existsSync(CONTENT_DIR)) fs.mkdirSync(CONTENT_DIR, { recursive: true });
   if (!fs.existsSync(STATE_DIR)) fs.mkdirSync(STATE_DIR, { recursive: true });
 
-  // Track known files to distinguish new screens from updates.
-  // macOS fs.watch reports 'rename' for both new files and overwrites,
-  // so we can't rely on eventType alone.
   const knownFiles = new Set(
     fs.readdirSync(CONTENT_DIR).filter(f => f.endsWith('.html'))
   );
@@ -298,9 +329,8 @@ function startServer() {
   const server = http.createServer(handleRequest);
   server.on('upgrade', handleUpgrade);
 
-  // Watch the decisions.json state file (Phase C drawer). Claude writes this
-  // file directly via the Write tool whenever a decision is confirmed or
-  // a question is parked. Broadcasts a state-update so the drawer re-renders.
+  // Watch the decisions.json state file. S4 may write live decision state here for the
+  // cockpit; a change broadcasts a state-update (and the frame can react / reload).
   const decisionsFile = path.join(STATE_DIR, 'decisions.json');
   let decisionsTimer = null;
   function broadcastDecisions() {
@@ -368,16 +398,12 @@ function startServer() {
     try { process.kill(ownerPid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
   }
 
-  // Check every 60s: exit if owner process died or idle for 30 minutes
   const lifecycleCheck = setInterval(() => {
     if (!ownerAlive()) shutdown('owner process exited');
     else if (Date.now() - lastActivity > IDLE_TIMEOUT_MS) shutdown('idle timeout');
   }, 60 * 1000);
   lifecycleCheck.unref();
 
-  // Validate owner PID at startup. If it's already dead, the PID resolution
-  // was wrong (common on WSL, Tailscale SSH, and cross-user scenarios).
-  // Disable monitoring and rely on the idle timeout instead.
   if (ownerPid) {
     try { process.kill(ownerPid, 0); }
     catch (e) {
@@ -397,8 +423,7 @@ function startServer() {
     });
     console.log(info);
     fs.writeFileSync(path.join(STATE_DIR, 'server-info'), info + '\n');
-    // Trigger file for the prism-vscode extension's BrainstormViewerWatcher.
-    // The watcher reads this file and opens the URL in Simple Browser.
+    // Trigger file for the prism-vscode extension's viewer watcher (opens the URL).
     fs.writeFileSync(path.join(STATE_DIR, 'open-viewer'), url);
   });
 }
