@@ -18,7 +18,7 @@ def load_videos():
     videos_file = DATA_DIR / "videos.json"
     if not videos_file.exists():
         return []
-    with open(videos_file) as f:
+    with open(videos_file, encoding="utf-8") as f:
         data = json.load(f)
     return data.get("videos", [])
 

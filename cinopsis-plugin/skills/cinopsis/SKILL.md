@@ -34,7 +34,8 @@ python scripts/fetch_videos.py --days 3             # AI keyword filter
 python scripts/fetch_videos.py --days 3 --all       # All topics
 python scripts/fetch_videos.py --keyword "blender"  # Custom topic
 python scripts/compare_videos.py --urls URL1 [URL2 ...]
-python scripts/compare_server.py --port 5123 --session SESSION_ID
+python scripts/build_session_from_analysis.py --input analysis.json --thumbnails  # inject a finished analysis (no fetch)
+python scripts/compare_server.py --port 5123 --session SESSION_ID   # self-reaps after --idle-timeout (default 1800s)
 python scripts/digest_all.py --days 3 --limit 10
 python scripts/get_transcript.py --video-id VIDEO_ID
 ```
@@ -44,6 +45,8 @@ python scripts/get_transcript.py --video-id VIDEO_ID
 - Transcripts: `${CLAUDE_PLUGIN_DATA}/transcript_VIDEO_ID.txt`
 - Digest: `${CLAUDE_PLUGIN_DATA}/output/ai_digest_YYYYMMDD.md`
 - Schema ref: `${CLAUDE_PLUGIN_ROOT}/skills/cinopsis/references/comparison-schema.md`
+
+**Inject-analysis method** (`build_session_from_analysis.py`): when transcripts were fetched + analyzed *elsewhere* — device-side while the cloud has no YouTube egress, by subagents, or any external pipeline — feed a finished-analysis JSON (same shape as `comparison-schema.md`) to build a real session through the plugin's own `save_session`/persist, then launch the viewer. Decouples analysis from fetching; `--thumbnails` backfills thumbnails (non-fatal).
 
 ## MCP Tools (Claude Cowork + Code)
 

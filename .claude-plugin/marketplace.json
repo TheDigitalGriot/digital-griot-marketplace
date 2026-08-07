@@ -11,7 +11,7 @@
       "name": "cinopsis",
       "source": "./cinopsis-plugin",
       "description": "Cinopsis â€” browse subscribed YouTube channels, fetch transcripts, and generate Markdown summary digests. Multi-video comparison with an interactive dashboard, frame screenshots, and AI chat. Runs on Claude Code and Cowork.",
-      "version": "2.1.4"
+      "version": "2.1.9"
     },
     {
       "name": "prism",

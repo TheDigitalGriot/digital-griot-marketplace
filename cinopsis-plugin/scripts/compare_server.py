@@ -9,6 +9,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_file, abort, Response, stream_with_context
 
 from capture_frames import capture_frame, extract_video_id
+from griot_widget_adapter import frame_viewer
 
 
 def create_app(data_dir=None):
@@ -25,7 +26,11 @@ def create_app(data_dir=None):
     @app.route("/")
     def index():
         if viewer_path.exists():
-            return send_file(viewer_path)
+            # GMCL-A1: art-preserving griot-widget bind -- griotwave frame + the Cinopsis
+            # design-system token override + one drive() CTA, applied server-side (no JS
+            # runtime import). The bespoke compare-graph markup/JS is untouched.
+            html = viewer_path.read_text(encoding="utf-8")
+            return Response(frame_viewer(html), mimetype="text/html; charset=utf-8")
         return "<h1>cinopsis Video Comparison</h1><p>viewer.html not found</p>", 200
 
     @app.route("/api/sessions")
@@ -375,6 +380,32 @@ def _promote_session_for_serving(session, work_sessions=None, canon_sessions=Non
         print(f"[warn] could not re-persist session before serving: {e}", flush=True)
 
 
+_LAST_ACTIVITY = [0.0]
+
+def _start_idle_watchdog(app, idle_timeout):
+    """Self-reap: shut the viewer down after idle_timeout seconds with no requests,
+    so viewer processes never orphan. idle_timeout<=0 disables (run forever)."""
+    import time, threading, os
+    if not idle_timeout or idle_timeout <= 0:
+        return
+    _LAST_ACTIVITY[0] = time.time()
+
+    @app.before_request
+    def _touch_activity():
+        _LAST_ACTIVITY[0] = time.time()
+
+    def _watch():
+        while True:
+            time.sleep(30)
+            idle = time.time() - _LAST_ACTIVITY[0]
+            if idle > idle_timeout:
+                print(f"[idle-reap] no requests for {int(idle)}s (> {idle_timeout}s); "
+                      f"shutting down viewer to avoid orphaning.", flush=True)
+                os._exit(0)
+
+    threading.Thread(target=_watch, daemon=True).start()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Start the video comparison viewer server")
     parser.add_argument("--port", type=int, default=5123, help="Port to serve on")
@@ -382,6 +413,8 @@ def main():
     parser.add_argument("--no-open", action="store_true", help="Don't open browser automatically")
     parser.add_argument("--session", help="Session ID to open directly")
     parser.add_argument("--data-dir", default=None, help="Data dir to read sessions from (default: canonical)")
+    parser.add_argument("--idle-timeout", type=int, default=1800,
+                        help="Self-reap after N seconds with no requests (0 = run forever). Default 1800 (30 min).")
     args = parser.parse_args()
 
     # Cowork two-copy fix: promote the enriched working copy to canonical before serving,
@@ -407,6 +440,7 @@ def main():
         return
 
     app = create_app(data_dir=args.data_dir)
+    _start_idle_watchdog(app, args.idle_timeout)
     if not args.no_open:
         import threading
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()

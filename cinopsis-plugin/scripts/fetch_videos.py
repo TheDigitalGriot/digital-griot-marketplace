@@ -23,7 +23,7 @@ AI_KEYWORDS = [
 def load_channels():
     if not CHANNELS_FILE.exists():
         return []
-    with open(CHANNELS_FILE) as f:
+    with open(CHANNELS_FILE, encoding="utf-8") as f:
         return json.load(f).get("channels", [])
 
 
@@ -135,7 +135,7 @@ def main():
     filtered.sort(key=lambda v: (v.get("upload_date", ""), v.get("view_count", 0)), reverse=True)
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_FILE, "w") as f:
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump({
             "videos": filtered,
             "fetched_at": datetime.now().isoformat(),

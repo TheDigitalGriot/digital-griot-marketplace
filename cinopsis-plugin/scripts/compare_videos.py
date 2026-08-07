@@ -90,7 +90,11 @@ def process_video(video_id):
     print(f"  Channel: {metadata['channel']}", flush=True)
 
     print("  Fetching thumbnail...", flush=True)
-    metadata["thumbnail_base64"] = fetch_thumbnail_base64(video_id)
+    try:
+        metadata["thumbnail_base64"] = fetch_thumbnail_base64(video_id)
+    except Exception as e:
+        print(f"  [warn] thumbnail fetch failed ({e}); continuing without it", flush=True)
+        metadata["thumbnail_base64"] = None
 
     print("  Fetching transcript...", flush=True)
     transcript, lang = get_transcript_ytdlp(video_id)
@@ -161,7 +165,7 @@ def save_session(comparison_data):
     index_file = SESSIONS_DIR / "index.json"
     index = []
     if index_file.exists():
-        with open(index_file) as f:
+        with open(index_file, encoding="utf-8") as f:
             index = json.load(f)
 
     index.insert(0, {
@@ -406,9 +410,16 @@ def main():
     if args.urls:
         video_ids = parse_urls(args.urls)
         print(f"Fetching {len(video_ids)} new video(s)...\n", flush=True)
+        failed = []
         for vid in video_ids:
-            video_data = process_video(vid)
-            videos.append(video_data)
+            try:
+                video_data = process_video(vid)
+                videos.append(video_data)
+            except Exception as e:
+                print(f"  [warn] skipping {vid}: {e}", flush=True)
+                failed.append(vid)
+        if failed:
+            print(f"\n[warn] {len(failed)} video(s) failed and were skipped: {', '.join(failed)}", flush=True)
 
     if not videos:
         parser.error("No videos specified. Use --urls, --from-session, or --list-videos.")

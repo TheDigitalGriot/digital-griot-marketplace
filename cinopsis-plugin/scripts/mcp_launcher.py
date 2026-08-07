@@ -160,6 +160,50 @@ def _bind_kill_on_close(child_pid):
         print("[cinopsis] job-object bind skipped: %s" % e, file=sys.stderr, flush=True)
 
 
+def _start_parent_watchdog(proc):
+    """Backstop to the Job Object: if our parent (Claude) vanishes, reap the
+    server child even when stdin-EOF did not propagate (e.g. a server that
+    ignores stdin close). A daemon thread polls the parent PID; on two
+    consecutive misses it terminates the child and exits, which also closes
+    the job handle (KILL_ON_JOB_CLOSE). Best-effort, Windows-only, non-fatal."""
+    if sys.platform != "win32":
+        return
+    import threading, time, ctypes
+    parent_pid = os.getppid()
+    if not parent_pid or parent_pid <= 0:
+        return
+    def _alive(pid):
+        try:
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenProcess(0x1000, False, int(pid))  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            try:
+                code = ctypes.c_ulong()
+                if not k32.GetExitCodeProcess(h, ctypes.byref(code)):
+                    return True  # query error -> assume alive, do not reap
+                return code.value == 259  # STILL_ACTIVE
+            finally:
+                k32.CloseHandle(h)
+        except Exception:
+            return True
+    def _watch():
+        misses = 0
+        while True:
+            time.sleep(5)
+            if _alive(parent_pid):
+                misses = 0
+            else:
+                misses += 1
+                if misses >= 2:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                    os._exit(0)
+    threading.Thread(target=_watch, daemon=True).start()
+
+
 def main(argv) -> int:
     if "--selfcheck" in argv:
         py = ensure_venv()
@@ -181,6 +225,7 @@ def main(argv) -> int:
     if sys.platform == "win32":
         proc = subprocess.Popen([str(py), str(target), *rest])
         _bind_kill_on_close(proc.pid)
+        _start_parent_watchdog(proc)
         try:
             return proc.wait()
         except KeyboardInterrupt:

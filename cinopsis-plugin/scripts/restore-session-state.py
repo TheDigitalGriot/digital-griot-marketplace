@@ -16,7 +16,7 @@ if not os.path.exists(progress_file):
     sys.exit(0)
 
 try:
-    with open(progress_file) as f:
+    with open(progress_file, encoding="utf-8") as f:
         state = json.load(f)
 
     status = state.get("status", "unknown")
