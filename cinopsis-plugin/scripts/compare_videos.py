@@ -11,7 +11,7 @@ from pathlib import Path
 
 from _utils import find_ytdlp, get_env, DATA_DIR, canonical_data_dir
 from capture_frames import extract_video_id, capture_frame
-from get_transcript import get_transcript_ytdlp, format_transcript
+from get_transcript import get_transcript_ytdlp, fetch_transcript, load_cached_transcript, format_transcript
 from persist_session import persist_session
 SESSIONS_DIR = DATA_DIR / "sessions"
 CANONICAL_SESSIONS_DIR = canonical_data_dir() / "sessions"
@@ -79,7 +79,7 @@ def fetch_thumbnail_base64(video_id):
     return None
 
 
-def process_video(video_id):
+def process_video(video_id, cache_mode="auto"):
     """Fetch metadata, transcript, and thumbnail for a single video."""
     print(f"\nProcessing: {video_id}", flush=True)
 
@@ -97,7 +97,13 @@ def process_video(video_id):
         metadata["thumbnail_base64"] = None
 
     print("  Fetching transcript...", flush=True)
-    transcript, lang = get_transcript_ytdlp(video_id)
+    if cache_mode == "only":
+        transcript, lang = load_cached_transcript(video_id)
+        if not transcript:
+            print("  [from-cache] no cached transcript; run fetch_transcripts.py first", flush=True)
+    else:
+        transcript, lang, _m = fetch_transcript(
+            video_id, allow_cache=(cache_mode != "refresh"), refresh=(cache_mode == "refresh"))
     metadata["transcript"] = transcript or []
     metadata["transcript_lang"] = lang
 
@@ -389,7 +395,11 @@ def main():
     parser.add_argument("--from-session", default=None, help="Pull videos from an existing session ID")
     parser.add_argument("--pick", nargs="+", help="Cherry-pick specific video IDs (use with --from-session)")
     parser.add_argument("--add-to", default=None, help="Add videos to an existing session instead of creating new")
+    parser.add_argument("--from-cache", action="store_true", help="Assemble from cached transcripts only (no fetch)")
+    parser.add_argument("--refresh", action="store_true", help="Force re-fetch, ignore the transcript cache")
+    parser.add_argument("--chunk", type=int, default=0, help="Process at most N of the given --urls this call (resume the rest with --add-to)")
     args = parser.parse_args()
+    cache_mode = "only" if args.from_cache else ("refresh" if args.refresh else "auto")
 
     # Mode 1: List videos
     if args.list_videos:
@@ -409,11 +419,14 @@ def main():
     # Gather videos from new URLs
     if args.urls:
         video_ids = parse_urls(args.urls)
+        if args.chunk and len(video_ids) > args.chunk:
+            print(f"[chunk] limiting to first {args.chunk} of {len(video_ids)} urls (resume the rest with --add-to)", flush=True)
+            video_ids = video_ids[:args.chunk]
         print(f"Fetching {len(video_ids)} new video(s)...\n", flush=True)
         failed = []
         for vid in video_ids:
             try:
-                video_data = process_video(vid)
+                video_data = process_video(vid, cache_mode=cache_mode)
                 videos.append(video_data)
             except Exception as e:
                 print(f"  [warn] skipping {vid}: {e}", flush=True)

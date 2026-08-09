@@ -99,3 +99,37 @@ Frame screenshots: key moments are auto-identified; users can also click the tim
 ## Channels Config
 
 Edit `${CLAUDE_PLUGIN_ROOT}/data/channels.json` — array of `{"name": "...", "id": "CHANNEL_ID"}` objects.
+
+
+## Transcript fetch - the reliable ladder (cloud <-> local) [PINNED]
+
+Fetching a transcript is environment-sensitive. `get_transcript.py` / `fetch_transcript()`
+run this ladder automatically; when you drive it by hand, follow the same order. **Do not
+re-derive this every session - it is baked into the tool and pinned here.**
+
+0. **Probe with ONE video first**, and never assume egress - this sandbox may or may not have
+   YouTube network access (it is inconsistent per session).
+1. **cache** - reuse `data/transcript_<id>.json` if present (idempotent).
+2. **api** (preferred) - `youtube-transcript-api`, instance `YouTubeTranscriptApi().fetch(id)`
+   (shim: legacy static `.get_transcript(id)`). Fast, no yt-dlp; needs egress.
+3. **yt-dlp** - subtitle download with cookie fallbacks. Works where the API is proxy-blocked.
+   Run it with the **venv** python (`mcp_launcher.py` installs `yt-dlp` from requirements) -
+   a bare system python will `FileNotFound` on yt-dlp.
+4. **asr** (optional) - `yt-dlp` audio -> `faster-whisper`, for caption-LESS videos. Fires
+   only if `faster-whisper` is installed; enable with `pip install faster-whisper`.
+5. **Chrome caption-scrape** (agent-side) - if all else fails and you have a browser, read
+   `ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks` off the
+   loaded watch page.
+
+### Batch / many videos - never all-N at once
+Fetch **one/-few IDs per call** with `fetch_transcripts.py --ids ... --chunk N` (each cheap,
+fits the ~60s device-bridge cap), then assemble once with `compare_videos.py --urls ... --from-cache`.
+A killed call resumes from `fetch_progress.json`. A single `compare_videos` over many URLs at
+once **will time out**.
+
+### Device gotchas (Windows-MCP bridge) - hard rules
+- **Never `Start-Process` / detached background** over the bridge -> `WinError 5` access denied.
+  Use sequential chunked calls (or a Scheduled Task) and poll.
+- **Controlled Folder Access** blocks the bridge from writing into connected folders (e.g. GriotMeta):
+  route output via `%TEMP%` then native `Copy-Item` into place.
+- Run scripts with the **venv** python (`mcp_launcher.py --selfcheck` prints it), not a bare system python.
