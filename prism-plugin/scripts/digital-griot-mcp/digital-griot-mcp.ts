@@ -775,9 +775,120 @@ function errJson(text: string) {
   return { isError: true, content: [{ type: "text" as const, text }] }
 }
 
-// tools/list — advertise the six gavel tools.
+// ---------------------------------------------------------------------------
+// griot_scrape — the Scrapling/WSL site-capture engine, exposed as an MCP tool
+// so Lucid (idea-init inspo fetch) and any client can drive it. The engine lives
+// in the Ubuntu-WSL venv ~/griot-scrape; this handler shells `wsl -e` into it and
+// returns the capture summary (WSL-boundary decision: shell-in, no refactor).
+// ---------------------------------------------------------------------------
+const GRIOT_TOOLS = [
+  {
+    name: "griot_scrape",
+    description:
+      "Capture a live website's complete rendered experience via the WSL Scrapling engine — " +
+      "every route, every image (decoding framework image-optimizer URLs back to their source), " +
+      "complete DOM — as an offline rebuild template. Runs capture_full.py in the ~/griot-scrape " +
+      "venv (DynamicFetcher/Chromium, network-idle + full scroll). Output lands under the given " +
+      "Windows outdir (default C:\\Users\\digit\\GriotClients\\<host>). Set rebuild=true to also " +
+      "emit self-contained offline snapshots (reveal-fixed, images optimized to WebP).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Base URL to capture, e.g. https://site.com." },
+        routes: {
+          type: "array",
+          items: { type: "string" },
+          description: 'Route paths to capture, e.g. ["/","/shop","/product/x"]. Default: ["/"].',
+        },
+        outdir: {
+          type: "string",
+          description: "Windows output dir. Default: C:\\Users\\digit\\GriotClients\\<host>.",
+        },
+        rebuild: {
+          type: "boolean",
+          description: "Also build offline snapshots via rebuild_offline.py. Default: false.",
+          default: false,
+        },
+      },
+      required: ["url"],
+      additionalProperties: false,
+    },
+  },
+]
+
+const WSL_PY = "/home/dgdev/griot-scrape/bin/python3"
+const WSL_CAPTURE = "/home/dgdev/griot-scrape/capture_full.py"
+const WSL_REBUILD = "/home/dgdev/griot-scrape/rebuild_offline.py"
+
+// C:\Users\x\y  ->  /mnt/c/Users/x/y  (the venv writes to the mounted Windows path)
+function winToWslMnt(p: string): string {
+  const m = p.match(/^([A-Za-z]):\\(.*)$/)
+  if (!m) return p
+  return `/mnt/${m[1].toLowerCase()}/` + m[2].replace(/\\/g, "/")
+}
+
+async function handleGriotScrape(args: Record<string, unknown>) {
+  const url = String(args.url ?? "").trim()
+  if (!url) return errJson("griot_scrape: url is required")
+  let host = "site"
+  try {
+    host = new URL(url).hostname.replace(/[^a-z0-9.-]/gi, "_")
+  } catch {
+    return errJson(`griot_scrape: invalid url "${url}"`)
+  }
+  const outWin = String(args.outdir ?? `C:\\Users\\digit\\GriotClients\\${host}`)
+  const outWsl = winToWslMnt(outWin)
+  const routes =
+    Array.isArray(args.routes) && args.routes.length
+      ? (args.routes as unknown[]).map(String)
+      : ["/"]
+  const rebuild = args.rebuild === true
+
+  const cap = Bun.spawn(
+    ["wsl", "-d", "Ubuntu", "-e", WSL_PY, WSL_CAPTURE, url, outWsl, ...routes],
+    { stdout: "pipe", stderr: "pipe" },
+  )
+  const capOut = await new Response(cap.stdout).text()
+  const capErr = await new Response(cap.stderr).text()
+  await cap.exited
+
+  let rebuildTail: string | undefined
+  if (rebuild) {
+    const rb = Bun.spawn(["wsl", "-d", "Ubuntu", "-e", WSL_PY, WSL_REBUILD, outWsl], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const rbOut = await new Response(rb.stdout).text()
+    await rb.exited
+    rebuildTail = rbOut.trim().split("\n").slice(-8).join("\n") || undefined
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            ok: cap.exitCode === 0,
+            url,
+            outdir: outWin,
+            routes,
+            rebuilt: rebuild,
+            capture_tail: capOut.trim().split("\n").slice(-12).join("\n"),
+            rebuild_tail: rebuildTail,
+            stderr_tail: capErr.trim().split("\n").slice(-4).join("\n") || undefined,
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  }
+}
+
+// tools/list — advertise the gavel tools + griot_scrape.
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: GAVEL_TOOLS.map((t) => ({
+  tools: [...GAVEL_TOOLS, ...GRIOT_TOOLS].map((t) => ({
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema,
@@ -802,6 +913,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return handleGavelCommit(args)
       case "gavel_decide":
         return handleGavelDecide(args)
+      case "griot_scrape":
+        return await handleGriotScrape(args)
       default:
         return errJson(`Unknown tool: ${name}`)
     }
