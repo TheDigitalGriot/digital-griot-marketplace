@@ -1,7 +1,7 @@
 ---
 name: cl-plugin-structure
 description: Use when creating, scaffolding, structuring, or validating plugins for Claude Code or Claude Cowork. Covers the .claude-plugin/plugin.json + marketplace manifest, component organization (agents, skills, slash commands, hooks, MCP/LSP servers, channels), agent/command/hook frontmatter, the .local.md per-project settings pattern, portable paths, surface compatibility, bundled validator scripts, and development workflow. Use this whenever the user mentions building a plugin, a skill, a slash command, a hook, an MCP server, a marketplace, or asks about plugin.json/SKILL.md structure — even if they don't say "plugin" explicitly.
-version: 0.7.4
+version: 0.7.5
 ---
 
 # Plugin Structure for Claude Code and Cowork
@@ -204,6 +204,24 @@ For transport modes (passive bus vs live-push), the cloud->local headless invoca
 
 Use `PLUGIN_DATA` for persisted deps (node_modules, venvs, caches). Use `PLUGIN_ROOT` for bundled scripts and configs. **Never** use hardcoded or relative paths.
 
+## Cloud / device resource resolution
+
+A skill's bundled `references/` `scripts/` `assets/` are not equally reachable everywhere. Two independent facts about a **Cowork cloud** session decide how to resolve them — apply the matrix, and bake the matching block into any resource-bundled skill:
+
+| | Read a bundled doc | Run a bundled script |
+|---|---|---|
+| **Standalone skill** (distributed via `save_skill` -> SKILL.md only) | device-side · `Get-Content C:\Users\digit\.claude\skills\<name>\<path>` | device-side · Windows-MCP PowerShell / `claude.exe -p` |
+| **Plugin skill** (installed via a plugin) | `PLUGIN_ROOT/<path>` — ships with the plugin, present in the cloud | device-side · Cowork has **no Bash tool** |
+
+Why: (1) `save_skill` uploads only the SKILL.md, so a standalone skill's bundled files never travel to the cloud account — they live on-device (`~/.claude/skills/<name>/`) and in the source repo. A plugin ships its whole folder, so its files resolve via `PLUGIN_ROOT`. (2) Cowork has **no Bash tool** (see the Components table), so **no** skill can *execute* a bundled script in-cloud — scripts always run device-side via the Windows-MCP PowerShell bridge or `claude.exe -p` headless. On **desktop / CLI** everything is local and the resolution is a no-op.
+
+**Required block.** Any skill that bundles files MUST carry a short "Resources — cloud / device resolution" block near the top, in the variant that matches how it is distributed:
+
+- **Standalone variant** (skills shipped via `save_skill`): read + execute both route device-side to `C:\Users\digit\.claude\skills\<name>\…`.
+- **Plugin variant** (skills shipped inside a plugin): read via `PLUGIN_ROOT/<path>`; execute device-side (Cowork has no Bash). Never assume a relative `scripts/…` path executes in the cloud.
+
+If the device bridge is unavailable, say so and fall back to the inline instructions — never silently fail. `create-fragment` emits the correct variant automatically for scaffolded skills.
+
 ## Development Workflow
 
 ### Claude Code
@@ -254,11 +272,12 @@ For the four-leaks audit framing, full routing-table syntax, room-file examples,
 
 ## Model Configuration (Claude Code current model line)
 
-As of July 2026, all four tiers are enabled — three for routine routing, plus Fable 5 as a HITL-gated escalation:
+As of July 2026, all five tiers are enabled — four for routine routing, plus Fable 5 as a HITL-gated escalation:
 
 | Tier | Frontmatter | When to reach for it |
 |---|---|---|
-| **Opus 4.8** | `model: opus` | Deep analysis, planning, critical reasoning — the **routine ceiling** for all standard work |
+| **Opus 5** | `model: opus5` | Deep analysis, planning, critical reasoning — the **routine ceiling** for all standard work (parallel `opus5` key; `opus`/`best` flip here later) |
+| **Opus 4.8** | `model: opus` | Reachable A/B target just below the ceiling — `opus`/`best` stay pinned here until the flip |
 | **Sonnet 4.6** | `model: sonnet` | General work, implementation, pattern-finding |
 | **Haiku 4.5** | `model: haiku` | Fast lookups, locators, mechanical commands |
 | **Fable 5** | `model: claude-fable-5` | **Gated escalation only** — enabled under Max subscription, but reached via the HITL gate, never a resting agent default (see below) |
@@ -267,7 +286,7 @@ As of July 2026, all four tiers are enabled — three for routine routing, plus 
 
 For the Opus/Sonnet/Haiku aliases: from Claude 4.6 onward, dateless IDs like `claude-opus-4-8` are **pinned snapshots**, not evergreen aliases — use the alias form (`model: opus`) for auto-updates, the full ID for pinning.
 
-Effort levels on Opus 4.7+: `low`, `medium`, `high`, `xhigh`, `max`. Default on Opus 4.8 is `high`. Set `effort: xhigh` in agent frontmatter for heavier reasoning; reserve `max` for one-shot critical work (it's session-only). The `ultrathink` keyword anywhere in a prompt triggers deeper reasoning on a single turn without changing session effort.
+Effort levels on Opus 4.7+ (including Opus 5): `low`, `medium`, `high`, `xhigh`, `max`. Default on Opus 5 and Opus 4.8 is `high`. On **Opus 5**, `low`/`medium` are strong enough for most routine dispatch — lower the effort dial for cost rather than dropping to a weaker tier, and keep thinking ON. Set `effort: xhigh` in agent frontmatter for heavier reasoning; reserve `max` for one-shot critical work (it's session-only). On Opus 5, `effort: xhigh|max` triggers a **one-shot confirm** — a per-call effort guard (headless-aware, always emits a visibility event), categorically **not** a Fable-style model gate; Opus 5 has no gate and no flag. The `ultrathink` keyword anywhere in a prompt triggers deeper reasoning on a single turn without changing session effort.
 
 For long-session work, append `[1m]` to the alias or pinned ID: `model: opus[1m]` opens the 1M-token context window. Fable 5 always uses 1M context — no suffix needed.
 
@@ -283,3 +302,4 @@ When building or optimizing a **harness** — a composed system of skills + agen
 - Minimal plugin: [examples/minimal-plugin.md](./examples/minimal-plugin.md)
 - Standard plugin: [examples/standard-plugin.md](./examples/standard-plugin.md)
 - Advanced plugin: [examples/advanced-plugin.md](./examples/advanced-plugin.md)
+
