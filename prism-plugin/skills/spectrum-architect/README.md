@@ -1,4 +1,4 @@
-# icm-architect
+# spectrum-architect
 
 A Claude skill that designs any process, idea, or problem into an **ICM workspace** — folder structure as agent architecture — or restructures an existing folder, repo, or vault into one.
 
@@ -24,12 +24,12 @@ Every result is validated with the **walk test**: an agent with no memory must o
 
 **Claude Code:** copy this folder to `~/.claude/skills/icm-architect/` (or `.claude/skills/icm-architect/` inside a project), then ask Claude to "ICM this" / "structure this for agents" / "build me a workspace for X".
 
-**Claude apps:** upload `icm-architect.skill` (build it with the skill-creator packager, or zip this folder's contents) via Settings → Capabilities.
+**Claude apps:** upload `spectrum-architect.skill` (build it with the skill-creator packager, or zip this folder's contents) via Settings → Capabilities.
 
 ## Layout
 
 ```
-icm-architect/
+spectrum-architect/
 ├─ SKILL.md              the method: invariants, build mode, restructure mode, walk test
 ├─ references/
 │  ├─ core.md            five principles, five-layer hierarchy, naming, token discipline

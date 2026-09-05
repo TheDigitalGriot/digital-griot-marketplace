@@ -43,11 +43,11 @@ Invoke via Task tool with subagent_type:
 
 ### Model Selection
 
-When the research scope is narrow (single file, specific function), consider overriding agent models down to haiku for faster, cheaper results. When the scope is broad (full subsystem, cross-cutting concern), use default models. See `references/model-selection.md` in `prism-spectrum` for the full guide.
+When the research scope is narrow (single file, specific function), consider overriding agent models down to haiku for faster, cheaper results. When the scope is broad (full subsystem, cross-cutting concern), use default models. See `references/model-selection.md` in `spectrum` for the full guide.
 
 ## Workflow
 
-> **ICM run-contract — read first.** If this run was launched with a stage contract (a `*-CONTEXT.md` in `.prism/shared/plans/`, or the path in `$PRISM_ICM_CONTRACT`), read it first and honor its Inputs / Locked Decisions / Success criteria before anything else. See `skills/icm-architect/references/prism-run-contract.md`.
+> **ICM run-contract — read first.** If this run was launched with a stage contract (a `*-CONTEXT.md` in `.prism/shared/plans/`, or the path in `$PRISM_ICM_CONTRACT`), read it first and honor its Inputs / Locked Decisions / Success criteria before anything else. See `skills/spectrum-architect/references/prism-run-contract.md`.
 
 ### 0. Read Mentioned Files First
 
