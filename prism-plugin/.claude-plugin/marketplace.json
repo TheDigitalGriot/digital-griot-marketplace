@@ -4,7 +4,7 @@
     "name": "Digital Griot Studio"
   },
   "metadata": {
-    "description": "Structured development workflow plugins for Claude Code — includes cl-plugin-structure skill (v0.7.2) for plugin/skill authoring, code intelligence layer (codebase-memory-mcp + graph-navigator agent + blast-radius analysis), Opus 4.8 enrichments, and current model-line guidance."
+    "description": "Structured development workflow plugins for Claude Code — includes the griot-agent-architect skill (v0.8.0, formerly cl-plugin-structure — that name still resolves) for plugin/skill/agent-architecture authoring, code intelligence layer (codebase-memory-mcp + graph-navigator agent + blast-radius analysis), Opus 4.8 enrichments, and current model-line guidance."
   },
   "plugins": [
     {

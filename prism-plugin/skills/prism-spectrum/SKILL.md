@@ -12,7 +12,7 @@ Execute a single story from the backlog with quality verification and atomic com
 
 > **Context requirement:** Uses `sonnet[1m]` for the 1M context window needed to hold full session state during autonomous multi-story runs without compaction risk. Requires Max/Team/Enterprise plan for included 1M Sonnet context, or usage credits on Pro. Disable globally with `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` if needed.
 
-> **Deterministic subagent caps:** `scripts/spectrum.sh` pins `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` (default `3`) and `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` (default `2`) on every worker so a story's fan-out is bounded and reproducible run-to-run. **Requires Claude Code ≥ 2.1.217** (older versions ignore the vars harmlessly). Override via the environment to widen or tighten. See [cl-plugin-structure/references/model-config.md §8](../cl-plugin-structure/references/model-config.md).
+> **Deterministic subagent caps:** `scripts/spectrum.sh` pins `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` (default `3`) and `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` (default `2`) on every worker so a story's fan-out is bounded and reproducible run-to-run. **Requires Claude Code ≥ 2.1.217** (older versions ignore the vars harmlessly). Override via the environment to widen or tighten. See [griot-agent-architect/references/model-config.md §8](../griot-agent-architect/references/model-config.md).
 
 ## Philosophy
 
@@ -423,4 +423,4 @@ If quality gates fail after retry:
 10. Signal: <spectrum-continue>STORY_COMPLETE: STORY-003</spectrum-continue>
 ```
 
-> See also: [cl-plugin-structure/references/model-config.md](../cl-plugin-structure/references/model-config.md) §6 for 1M context aliases (`opus[1m]`, `sonnet[1m]`) and availability by plan tier.
+> See also: [griot-agent-architect/references/model-config.md](../griot-agent-architect/references/model-config.md) §6 for 1M context aliases (`opus[1m]`, `sonnet[1m]`) and availability by plan tier.
