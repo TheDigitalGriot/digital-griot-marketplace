@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# ============================================================================
+# RETIRED 2026-09-05 -- the Ralph loop is retired (Spectrum re-founding, Q3).
+# The runner is now scripts/spectrum-marathon.sh -- the ICM long-form walk:
+# it walks numbered stage contracts and advances when a stage output exists
+# (the filesystem is the state machine). No MAX_ITERATIONS, no lying-signal
+# verification, no story queue -- ICM makes all of that unnecessary.
+# This file is kept for reference; do not build on its loop.
+# ============================================================================
 # Spectrum Iterative Executor for Prism
 # Spawns fresh Claude Code sessions in a loop to execute stories autonomously
 #
@@ -379,7 +387,7 @@ run_iteration() {
     local exit_code=0
 
     # Build the prompt — story is pre-selected by spectrum.sh, not by Claude
-    local prompt="Execute story $story_id from $STORIES_FILE using the /spectrum workflow. Progress file (consolidated patterns — read this): $PROGRESS_FILE. Progress log (iteration history — append entries here, do NOT read): $PROGRESS_LOG_FILE. The story has been pre-selected — do not pick a different story."
+    local prompt="Execute story $story_id from $STORIES_FILE using the /spectrum workflow (formerly /prism-spectrum; both names resolve). Progress file (consolidated patterns — read this): $PROGRESS_FILE. Progress log (iteration history — append entries here, do NOT read): $PROGRESS_LOG_FILE. The story has been pre-selected — do not pick a different story."
 
     log "Executing story: $story_id"
 

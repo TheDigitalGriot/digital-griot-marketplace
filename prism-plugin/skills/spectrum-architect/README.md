@@ -1,5 +1,9 @@
 # spectrum-architect
 
+> Formerly `icm-architect`. The old name still resolves as a deprecation alias — nothing was deleted.
+> **ICM is the protocol; Spectrum is Griot's implementation of it.** ICM keeps its own name throughout
+> (that is attribution to Van Clief & McDermott, not preference); the *skill* takes the Griot name.
+
 A Claude skill that designs any process, idea, or problem into an **ICM workspace** — folder structure as agent architecture — or restructures an existing folder, repo, or vault into one.
 
 ICM (Interpretable Context Methodology) replaces orchestration code with structure: numbered folders carry sequencing, hierarchy carries context scoping, plain markdown files carry state. One agent, reading the right files at the right moment, does the work of a multi-agent framework — and a human can open any folder and see exactly what state the system is in.
@@ -22,7 +26,7 @@ Every result is validated with the **walk test**: an agent with no memory must o
 
 ## Install
 
-**Claude Code:** copy this folder to `~/.claude/skills/icm-architect/` (or `.claude/skills/icm-architect/` inside a project), then ask Claude to "ICM this" / "structure this for agents" / "build me a workspace for X".
+**Claude Code:** copy this folder to `~/.claude/skills/spectrum-architect/` (or `.claude/skills/spectrum-architect/` inside a project), then ask Claude to "ICM this" / "structure this for agents" / "build me a workspace for X".
 
 **Claude apps:** upload `spectrum-architect.skill` (build it with the skill-creator packager, or zip this folder's contents) via Settings → Capabilities.
 

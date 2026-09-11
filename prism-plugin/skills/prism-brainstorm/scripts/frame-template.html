@@ -383,7 +383,7 @@
     z-index:2;
   }
   .drawer.collapsed{width:0;opacity:0;border-left:none;pointer-events:none}
-  .drawer-toggle{
+  .drawer-toggle,.arail-tab{
     position:absolute;right:280px;top:50%;transform:translateY(-50%);z-index:10;
     background:var(--haze-10);border:1px solid var(--rim-10);border-right:none;
     border-radius:6px 0 0 6px;color:var(--whisper);
@@ -395,7 +395,7 @@
   }
   .drawer-toggle:hover{color:var(--neural);background:var(--neural-wash)}
   .drawer-toggle svg{display:block}
-  .drawer-toggle.collapsed-state{
+  .drawer-toggle.collapsed-state,.arail-tab.collapsed-state{
     right:0;writing-mode:horizontal-tb;
     padding:10px 6px;border-radius:6px 0 0 6px;
   }
@@ -432,6 +432,9 @@
     text-transform:uppercase;letter-spacing:.08em;margin-right:6px;
   }
   .drawer .parked-item .q{color:var(--solar)}
+  /* a resolved tangent merged back into the trunk — violet, like the lane */
+  .drawer .parked-item.merged .q{color:var(--violet,#A855F7)}
+  .drawer .parked-item.merged{border-left:2px solid var(--violet,#A855F7)}
   .drawer .decision-item .label,.drawer .parked-item .label{color:var(--voice);font-weight:500}
   .drawer .decision-item .summary,.drawer .parked-item .concern{display:block;margin-top:4px;color:var(--whisper);overflow:hidden;max-height:0;opacity:0;transition:max-height .25s var(--tale),opacity .2s ease,margin-top .2s ease}
   .drawer .parked-item .revisit{display:block;margin-top:0;font-size:10px;color:var(--footstep);font-style:italic;overflow:hidden;max-height:0;opacity:0;transition:max-height .25s var(--tale),opacity .2s ease,margin-top .2s ease}
@@ -441,6 +444,496 @@
     margin-top:8px;padding:6px 8px;border-radius:6px;
     background:rgba(249,115,22,.06);border:1px solid rgba(249,115,22,.22);
     color:var(--solar);font-size:10px;font-family:var(--font-code);
+  }
+
+  /* ===== QUESTION RAIL (multi-state: graph | agent | …) =====
+     One left surface, several states. The graph is drawn as a vertical
+     git spine because that is git's native axis and a rail is vertical.
+     Mode controls sit at the BOTTOM so they land in the thumb arc on
+     touch surfaces rather than out of reach at the top. */
+  /* shared rail chrome */
+  .grail,.arail{
+    display:flex;flex-direction:column;min-height:0;position:relative;z-index:2;
+    border-right:1px solid var(--rim-08);background:rgba(0,0,0,.30);
+    backdrop-filter:var(--blur-frost);-webkit-backdrop-filter:var(--blur-frost);
+    transition:flex-basis .26s var(--tale),width .26s var(--tale),opacity .2s ease;
+  }
+
+  /* PANE 1 — graph. Collapses to a thin spine: dots only, no labels. */
+  .grail{flex:0 0 216px;width:216px}
+  .grail-body{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:14px 10px 8px}
+  .grail-head{
+    flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;
+    gap:8px;padding:10px 10px 6px;
+  }
+  .grail-head .lbl{
+    font-family:var(--font-code);font-size:9px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--footstep);white-space:nowrap;overflow:hidden;
+  }
+  .grail-toggle{
+    width:26px;height:26px;flex:0 0 26px;border-radius:8px;cursor:pointer;
+    display:grid;place-items:center;font-size:11px;line-height:1;
+    color:var(--whisper);background:var(--haze-04);border:1px solid var(--rim-08);
+    transition:.15s var(--tale);
+  }
+  .grail-toggle:hover{color:var(--iris,#22D3EE);background:var(--haze-06);border-color:var(--iris,#22D3EE)}
+  .grail.thin .grail-head{justify-content:center;padding:10px 0 6px}
+  .grail.thin .grail-head .lbl{display:none}
+  .grail.thin .grail-toggle{transform:rotate(180deg)}
+  .grail.thin{flex-basis:40px;width:40px}
+  .grail.thin .grail-body{padding:14px 4px 8px}
+  .grail.thin .qg-txt{display:none}
+  .grail.thin .qg-row{justify-content:center;padding:6px 0}
+  .grail.thin .qg-row.branch{margin-left:14px;padding-left:0}
+  .grail.thin .qg-spine::before{left:12px}
+  .grail.thin .qg-row.branch::before,
+  .grail.thin .qg-row.branch::after{left:-10px;width:11px}
+  .grail.thin .qg-row.parked::after{left:-10px;width:6px}
+  .grail.thin .grail-toggle{transform:rotate(180deg)}
+
+  /* PANE 2 — agent / multi-state. Collapses to a tab, like the drawer. */
+  .arail{flex:0 0 268px;width:268px}
+  .arail-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:14px 10px 8px;display:flex;flex-direction:column}
+  .arail.collapsed{flex-basis:0;width:0;opacity:0;pointer-events:none;border-right:none}
+  /* the chat tab uses the SAME chrome as the drawer toggle, mirrored to the
+     left edge — identical shape, identical states. */
+  .arail-tab{
+    position:static;transform:none;flex:0 0 auto;align-self:center;
+    border-right:1px solid var(--rim-10);border-left:none;
+    border-radius:0 6px 6px 0;
+  }
+
+  /* drag-to-resize gutters between panes */
+  .rail-resizer{
+    flex:0 0 5px;cursor:col-resize;position:relative;z-index:5;
+    background:transparent;transition:background .15s var(--tale);
+  }
+  .rail-resizer:hover,.rail-resizer.dragging{background:rgba(34,211,238,.30)}
+  .rail-resizer::after{
+    content:"";position:absolute;top:50%;left:1px;width:3px;height:34px;
+    transform:translateY(-50%);border-radius:2px;background:var(--rim-10);
+  }
+  .rail-resizer:hover::after{background:var(--iris,#22D3EE)}
+  body.resizing{cursor:col-resize;user-select:none}
+  .qrail-pane[hidden]{display:none}
+  .qrail-modes{
+    order:2;flex:0 0 auto;display:flex;gap:5px;padding:8px 8px 10px;
+    border-top:1px solid var(--rim-08);background:rgba(0,0,0,.34);
+  }
+  .qrail-mode{
+    flex:1;height:34px;border-radius:8px;cursor:pointer;
+    border:1px solid var(--rim-08);background:var(--haze-04);color:var(--footstep);
+    font-family:var(--font-code);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+    transition:.16s var(--tale);
+  }
+  .qrail-mode:hover{color:var(--voice);background:var(--haze-06)}
+  .qrail-mode.on{
+    color:var(--iris,#22D3EE);border-color:var(--iris,#22D3EE);
+    background:rgba(34,211,238,.13);box-shadow:0 0 14px 0 rgba(34,211,238,.18);
+  }
+  .qg-empty{font-family:var(--font-code);font-size:10.5px;color:var(--footstep);
+            font-style:italic;padding:6px 4px;line-height:1.6}
+
+  /* ── the decision spine ──────────────────────────────────────────────
+     Researched grammar (see .prism/shared/research/2026-09-04-decision-graph-notation.md).
+     THREE INDEPENDENT CHANNELS, never overloaded — the PROV principle:
+       border-style = STATE      solid decided · dashed parked · dotted open   (QOC)
+       badge        = ORIGIN     -> outbound · <- inbound · <-> adjacent        (Compendium)
+       indent       = SPLINTER   Q3 -> Q3.1, an outline nesting, not a lane
+     Deliberately NOT git lanes: lane width scales with concurrent branches and
+     git has no glyph for foreign origin. */
+  .qg-spine{position:relative;padding-left:2px}
+  .qg-spine::before{
+    content:"";position:absolute;left:11px;top:10px;bottom:10px;width:2px;
+    background:var(--iris,#22D3EE);opacity:.5;
+  }
+  .qg-row{
+    display:flex;align-items:center;gap:9px;padding:6px 5px;border-radius:7px;
+    cursor:pointer;position:relative;transition:background .15s var(--tale);
+  }
+  .qg-row:hover{background:var(--haze-06)}
+  .qg-row.sel{background:rgba(34,211,238,.12)}
+
+  /* STATE — carried entirely by the dot's border style */
+  .qg-dot{
+    width:15px;height:15px;border-radius:50%;flex-shrink:0;margin-left:4px;
+    position:relative;z-index:1;background:var(--void);
+    border:2px solid var(--footstep);
+  }
+  .qg-row.done  .qg-dot{border-style:solid;border-color:var(--bio);background:var(--bio)}
+  .qg-row.now   .qg-dot{border-style:solid;border-color:var(--iris,#22D3EE);background:var(--iris,#22D3EE);
+                        box-shadow:0 0 0 3px rgba(34,211,238,.22)}
+  .qg-row.parked .qg-dot{border-style:dashed;border-color:var(--solar);background:var(--void)}
+  .qg-row.open  .qg-dot{border-style:dotted;border-color:var(--footstep);background:var(--void)}
+
+  .qg-txt{
+    font-family:var(--font-code);font-size:10.5px;letter-spacing:.03em;
+    color:var(--echo);line-height:1.5;min-width:0;
+    overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  }
+  .qg-row.open .qg-txt,.qg-row.parked .qg-txt{color:var(--whisper)}
+
+  /* ORIGIN + DIRECTION — a badge, never a lane */
+  .qg-bdg{
+    margin-left:auto;flex-shrink:0;font-family:var(--font-code);font-size:8.5px;
+    letter-spacing:.04em;padding:2px 6px;border-radius:var(--r-pill);
+    border:1px solid currentColor;white-space:nowrap;opacity:.95;
+  }
+  .qg-bdg.out{color:var(--bio-hot)}
+  .qg-bdg.in{color:var(--voltage)}
+  .qg-bdg.adj{color:var(--neural)}
+  .qg-bdg.back{color:var(--violet,#A855F7)}
+  .qg-bdg.park{color:var(--solar)}
+
+  /* SPLINTER — outline nesting with a soft elbow, not a second lane */
+  .qg-row.splinter{margin-left:22px;padding-left:6px}
+  .qg-row.splinter::before{
+    content:"";position:absolute;left:-13px;top:-8px;bottom:50%;width:12px;
+    border-left:2px dotted var(--rim-15);
+    border-bottom:2px dotted var(--rim-15);
+    border-bottom-left-radius:7px;
+  }
+  .grail.thin .qg-bdg{display:none}
+
+
+
+  /* ---- view mode toggle: layers | timeline ---- */
+  .grail-views{flex:0 0 auto;display:flex;gap:4px;padding:0 10px 8px}
+  .vchip{
+    flex:1;cursor:pointer;font-family:var(--font-code);font-size:9px;letter-spacing:.1em;
+    text-transform:uppercase;padding:5px 6px;border-radius:7px;
+    border:1px solid var(--rim-08);background:var(--haze-04);color:var(--footstep);
+    transition:.15s var(--tale);
+  }
+  .vchip:hover{color:var(--voice);background:var(--haze-06)}
+  .vchip.on{
+    color:var(--iris,#22D3EE);border-color:var(--iris,#22D3EE);
+    background:rgba(34,211,238,.13);box-shadow:0 0 12px 0 rgba(34,211,238,.16);
+  }
+  .grail.thin .grail-views{display:none}
+
+  /* ---- collapsible layers + filter chips ---- */
+  .grail-filter{
+    width:26px;height:26px;flex:0 0 26px;border-radius:8px;cursor:pointer;
+    display:grid;place-items:center;font-size:11px;line-height:1;
+    color:var(--whisper);background:var(--haze-04);border:1px solid var(--rim-08);
+    transition:.15s var(--tale);
+  }
+  .grail-filter:hover,.grail-filter.on{
+    color:var(--iris,#22D3EE);border-color:var(--iris,#22D3EE);background:rgba(34,211,238,.13);
+  }
+  .grail-filters{
+    flex:0 0 auto;display:flex;flex-wrap:wrap;gap:5px;padding:0 10px 10px;
+  }
+  /* an author `display` beats the UA [hidden] rule — say it explicitly */
+  .grail-filters[hidden],.qrail-pane[hidden],[hidden]{display:none !important}
+  .fchip{
+    cursor:pointer;font-family:var(--font-code);font-size:9px;letter-spacing:.04em;
+    padding:4px 8px;border-radius:var(--r-pill);
+    border:1px solid var(--rim-08);background:var(--haze-04);color:var(--whisper);
+  }
+  .fchip b{color:var(--voice);font-weight:600;margin-left:3px}
+  .fchip:hover{border-color:var(--iris,#22D3EE);color:var(--voice)}
+  .fchip.off{opacity:.38;text-decoration:line-through}
+  .grail.thin .grail-filters,.grail.thin .grail-filter{display:none}
+
+  .qg-group{margin-bottom:6px}
+  .qg-group.filtered-out{display:none}
+  .qg-ghead{
+    width:100%;display:flex;align-items:center;gap:7px;cursor:pointer;
+    padding:6px 6px;border:0;border-radius:7px;background:transparent;
+    font-family:var(--font-code);font-size:9px;letter-spacing:.13em;
+    text-transform:uppercase;color:var(--footstep);
+  }
+  .qg-ghead:hover{background:var(--haze-06);color:var(--whisper)}
+  .qg-ghead .chev{font-size:8px;transition:transform .2s var(--tale)}
+  .qg-group.collapsed .qg-ghead .chev{transform:rotate(-90deg)}
+  .qg-ghead .gname{flex:1;text-align:left}
+  .qg-ghead .gcount{
+    font-size:9px;padding:1px 6px;border-radius:var(--r-pill);
+    background:var(--haze-06);color:var(--whisper);
+  }
+  .qg-gbody{overflow:hidden;transition:max-height .22s var(--tale),opacity .18s ease}
+  .qg-group.collapsed .qg-gbody{max-height:0;opacity:0}
+  .qg-group[data-layer="done"] .qg-ghead .chev{color:var(--bio)}
+  .qg-group[data-layer="outbound"] .qg-ghead .chev{color:var(--bio-hot)}
+  .qg-group[data-layer="parked"] .qg-ghead .chev{color:var(--solar)}
+  .qg-group[data-layer="external"] .qg-ghead .chev{color:var(--neural)}
+  .now-wrap{margin-bottom:8px}
+  .grail.thin .qg-ghead .gname,.grail.thin .qg-ghead .gcount{display:none}
+  .grail.thin .qg-ghead{justify-content:center;padding:5px 0}
+
+
+
+  /* superseded — decided once, then replaced by a later decision */
+  .qg-row.superseded .qg-dot{border-style:solid;border-color:var(--footstep);background:transparent}
+  .qg-row.superseded .qg-txt{color:var(--footstep);text-decoration:line-through;
+                             text-decoration-thickness:1px;text-decoration-color:var(--rim-15)}
+  .qg-bdg.sup{color:var(--footstep)}
+  .qg-group[data-layer="superseded"] .qg-ghead .chev{color:var(--footstep)}
+  .qg-group[data-layer="inbound"] .qg-ghead .chev{color:var(--voltage)}
+  .qg-group[data-layer="adjacent"] .qg-ghead .chev{color:var(--neural)}
+
+
+
+  /* timeline mode — a question collapses its own sub-thread */
+  .qg-itemhead{display:flex;align-items:center;gap:2px}
+  .qg-itemhead .qg-row{flex:1}
+  .kid-toggle{
+    flex:0 0 14px;width:14px;height:22px;cursor:pointer;border:0;background:transparent;
+    color:var(--footstep);font-size:8px;line-height:1;padding:0;
+    transition:transform .2s var(--tale),color .15s ease;
+  }
+  .kid-toggle:hover{color:var(--iris,#22D3EE)}
+  .qg-item.collapsed .kid-toggle{transform:rotate(-90deg)}
+  .qg-kids{overflow:hidden;transition:max-height .22s var(--tale),opacity .18s ease}
+  .qg-item.collapsed .qg-kids{max-height:0;opacity:0}
+  .qg-item.has-kids.collapsed .qg-itemhead .qg-row::after{
+    content:"\2026";margin-left:6px;color:var(--footstep);font-size:9px;
+  }
+
+  /* a node with nothing to open should not look clickable */
+  .qg-row.no-screen{cursor:default}
+  .qg-row.no-screen:hover{background:transparent}
+  .qg-row.no-screen .qg-txt{opacity:.85}
+
+
+
+  /* ================= WORKGRAPH PANELS (VS Code-style stacked sections) =======
+     STATES and RELATIONS are two VIEWS of the same items, not two halves of a
+     split. State and direction are orthogonal: a parked item that spawns work in
+     Cinopsis is BOTH parked AND outbound, so it appears once in each panel. That
+     is why Outbound/Inbound/Adjacent can be populated while Parked stays honest.
+     ========================================================================= */
+  .qg-panel{margin-bottom:4px}
+  .qg-phead{
+    width:100%;display:flex;align-items:center;gap:7px;cursor:pointer;
+    padding:8px 7px;border:0;border-radius:7px;background:transparent;
+    font-family:var(--font-code);font-size:12px;letter-spacing:.2em;
+    text-transform:uppercase;color:var(--whisper);
+  }
+  .qg-phead:hover{background:var(--haze-06);color:var(--voice)}
+  .qg-phead .pname{flex:1;text-align:left;font-weight:600}
+  .qg-phead .pcount{
+    font-size:11px;padding:1.5px 8px;border-radius:var(--r-pill);
+    background:var(--haze-06);color:var(--whisper);
+  }
+  .qg-phead .chev{font-size:9px;transition:transform .2s var(--tale)}
+  .qg-panel.collapsed .qg-phead .chev{transform:rotate(-90deg)}
+  .qg-pbody{overflow:hidden;transition:max-height .22s var(--tale),opacity .18s ease}
+  .qg-panel.collapsed .qg-pbody{max-height:0;opacity:0}
+  /* A FULL solid rule across the box -- and the drag handle between the two
+     sections. The ::after gives it a ~9px grab target without making the line
+     itself thick. */
+  .qg-panel-split{
+    height:1px;margin:10px 0 12px;width:100%;
+    background:var(--rim-15);
+    position:relative;cursor:row-resize;
+    transition:background .15s ease;
+  }
+  .qg-panel-split::after{
+    content:"";position:absolute;left:0;right:0;top:-5px;height:11px;
+  }
+  .qg-panel-split:hover,.qg-panel-split.dragging{background:var(--iris,#22D3EE)}
+  body.resizing-v{cursor:row-resize;user-select:none}
+  .qg-panel[data-panel="states"] .qg-pbody{
+    max-height:46vh;overflow-y:auto;
+  }
+  .grail.thin .qg-phead .pname{display:none}
+  .grail.thin .qg-phead{justify-content:center;padding:5px 0}
+  .grail.thin .qg-phead .pcount{background:transparent;padding:0;font-size:9px}
+  .grail.thin .qg-panel-split{margin:8px 0;cursor:default}
+  .grail.thin .qg-panel-split::after{display:none}
+  .grail.thin .qg-panel[data-panel="states"] .qg-pbody{max-height:none}
+
+  /* ================= TYPOGRAPHY — the rail was too small across the board ===
+     Every size below was raised together. Bumping one and leaving the rest makes
+     the rail read as inconsistent rather than bigger. ======================== */
+  .grail-head .lbl{font-size:11px;letter-spacing:.15em}
+  .qg-ghead{font-size:10.5px;letter-spacing:.11em;padding:7px 6px}
+  .qg-ghead .gcount{font-size:10.5px;padding:1.5px 7px}
+  .qg-ghead .gicon svg{width:14px;height:14px;stroke-width:2}
+  .qg-txt{font-size:12.5px;line-height:1.45}
+  .qg-bdg{font-size:10px;padding:1.5px 7px}
+  .qg-none{font-size:10.5px}
+  .grail-filter{font-size:10.5px}
+
+
+  /* ================= DRAG GUTTERS — gone when the pane is collapsed =========
+     A collapsed rail has no width to distribute, so a live resize handle beside
+     it can only produce a confusing no-op drag. display:none removes both the
+     affordance AND the behaviour in one move -- there is no disabled-but-present
+     state to get wrong. ====================================================== */
+  .grail.thin ~ .rail-resizer[data-target="grail"],
+  .arail.collapsed ~ .rail-resizer[data-target="arail"]{
+    display:none;
+  }
+
+  /* ================= CHAT TAB — arrow open, bot glyph closed ================ */
+  .arail-tab{display:flex;align-items:center;justify-content:center}
+  .arail-tab .tab-bot{display:none;align-items:center;justify-content:center}
+  .arail-tab svg,.arail-tab .tab-bot svg{width:15px;height:15px;display:block}
+  .arail-tab.collapsed-state .tab-arrow{display:none}
+  .arail-tab.collapsed-state .tab-bot{display:flex}
+  /* the arrow must point the way the pane will MOVE; the collapsed state shows a
+     bot instead of an arrow, so there is no direction left to get wrong there. */
+  .arail-tab.collapsed-state{transform:none}
+  /* SKEUOMORPHIC EDGE. Collapsed, the rail has zero width and the tab protrudes
+     RIGHT into the content area, so its free edge is the right one -- that is the
+     edge that should be rounded, with the joined left edge square. The borders
+     already encoded this (none on the left, 0.8px on right/top/bottom); only the
+     radius was mirrored, which made the tab read as if it hung off something to
+     its right. The expanded state is correct and is deliberately left alone. */
+  /* Pin BOTH states explicitly. Four rules were competing for this radius and an
+     unscoped `.arail-tab` one was winning for the open state too -- which flipped
+     the expanded tab that was already correct. Scoping both ends removes the
+     cascade race instead of adding another rule to it. */
+  html.no-anim .grail,html.no-anim .arail,html.no-anim .arail-tab{
+    transition:none !important;
+  }
+  html.pre-arail-collapsed .arail{
+    flex-basis:0;width:0;opacity:0;pointer-events:none;border-right:none;
+  }
+  html.pre-arail-collapsed .arail-tab{border-radius:0 6px 6px 0}
+  html.pre-arail-collapsed .rail-resizer[data-target="arail"]{display:none}
+  .arail-tab.collapsed-state{border-radius:0 6px 6px 0}
+
+  /* ---- layer identity: caret, light, icon, name, number ----
+     The caret STAYS -- it reads as a disclosure control, not a second dot.
+     (It was briefly hidden on a misread; restored deliberately.) */
+  /* The layer light is RETIRED. Once the glyph carries the layer colour there is
+     nothing left for a separate dot to say, and at any size it competed with
+     .qg-dot (~15px), which is a work node -- a different class of object.
+     Markup keeps the span so nothing downstream breaks. */
+  .qg-ghead .glight{display:none}
+  .qg-ghead .gicon{
+    font-size:11px;line-height:1;flex-shrink:0;display:flex;align-items:center;
+    color:var(--layer-c,var(--footstep));
+  }
+  /* Lucide ships on a 24 grid with a 2px stroke; at 12px that renders ~1px and
+     goes soft, so the stroke is nudged up rather than the glyph scaled down. */
+  .qg-ghead .gicon svg{
+    width:12px;height:12px;display:block;stroke-width:2.15;
+  }
+  .qg-group[data-layer="done"]       { --layer-c:var(--bio) }
+  .qg-group[data-layer="superseded"] { --layer-c:var(--footstep) }
+  .qg-group[data-layer="outbound"]   { --layer-c:var(--bio-hot) }
+  .qg-group[data-layer="inbound"]    { --layer-c:var(--voltage) }
+  .qg-group[data-layer="adjacent"]   { --layer-c:var(--neural) }
+  .qg-group[data-layer="parked"]     { --layer-c:var(--solar) }
+  .qg-group[data-layer="open"]       { --layer-c:var(--footstep) }
+  .qg-group.empty .glight{box-shadow:none;opacity:.45}
+
+  /* COMPACT RAIL — a split glass pill.
+     LEFT  = the glyph, on a gradient of the layer's own colour, subtly glowing.
+     RIGHT = the count, clear glass — unless the layer is current, which takes
+             the iris tint so the active lane is findable at a glance.
+     The head itself becomes the pill; icon and count are its two segments. */
+  .grail.thin .qg-ghead{
+    display:flex;flex-direction:row;gap:0;padding:0;margin:0 auto;
+    width:34px;border-radius:var(--r-pill);overflow:hidden;
+    border:1px solid var(--rim-10);
+    background:var(--haze-04);
+    backdrop-filter:var(--blur-frost,blur(10px) saturate(140%));
+    -webkit-backdrop-filter:var(--blur-frost,blur(10px) saturate(140%));
+    box-shadow:0 0 7px -2px var(--layer-c,transparent);
+  }
+  .grail.thin .qg-ghead:hover{
+    border-color:var(--rim-15);
+    box-shadow:0 0 11px -2px var(--layer-c,transparent);
+  }
+  .grail.thin .qg-ghead .chev,
+  .grail.thin .qg-ghead .gname,
+  .grail.thin .qg-ghead .glight{display:none}
+
+  /* left segment — colour gradient carrying the layer identity */
+  .grail.thin .qg-ghead .gicon{
+    flex:1 1 auto;display:flex;align-items:center;justify-content:center;
+    padding:4px 0;font-size:10px;line-height:1;color:var(--voice);
+    border-right:1px solid var(--rim-10);
+    /* compact pill: slightly smaller glyph, slightly heavier stroke to hold up */
+    background:linear-gradient(135deg,
+      color-mix(in srgb, var(--layer-c,var(--footstep)) 58%, transparent),
+      color-mix(in srgb, var(--layer-c,var(--footstep)) 16%, transparent));
+  }
+  /* right segment — clear glass. display MUST be restated: an earlier rule
+     hides .gcount in thin mode, and a silent override is how the number
+     vanished before. */
+  .grail.thin .qg-ghead .gcount{
+    display:flex;flex:0 0 13px;align-items:center;justify-content:center;
+    padding:4px 0;border:0;border-radius:0;
+    font-size:8px;line-height:1;
+    background:rgba(255,255,255,.04);color:var(--whisper);
+  }
+  .grail.thin .qg-ghead .gicon svg{width:11px;height:11px;stroke-width:2.3}
+  /* the current lane — iris tint on the glass */
+  .grail.thin .qg-group.current .qg-ghead .gcount{
+    background:color-mix(in srgb, var(--iris,#22D3EE) 24%, transparent);
+    color:var(--iris,#22D3EE);
+  }
+  .grail.thin .qg-group.current .qg-ghead{
+    border-color:color-mix(in srgb, var(--iris,#22D3EE) 45%, transparent);
+  }
+  /* an empty layer dims but still renders — absence is information */
+  .grail.thin .qg-group.empty .qg-ghead{opacity:.42;box-shadow:none}
+  .grail.thin .qg-group.empty .gcount{border:0}
+  .grail.thin .qg-group{margin-bottom:5px}
+  .grail.thin .qg-gbody{display:none}
+
+  /* an empty layer still shows — absence is information */
+  .qg-group.empty .qg-ghead{opacity:.5}
+  .qg-group.empty .gcount{background:transparent;border:1px dashed var(--rim-10)}
+  .qg-none{
+    font-family:var(--font-code);font-size:9px;font-style:italic;
+    color:var(--footstep);padding:4px 6px 6px 22px;opacity:.7;
+  }
+  .fchip.zero{opacity:.5}
+  .fchip.zero b{color:var(--footstep)}
+
+  /* viewing an earlier screen from the graph */
+  .qg-history{
+    display:flex;align-items:center;gap:12px;margin-bottom:22px;padding:9px 14px;
+    border-radius:10px;border:1px solid rgba(34,211,238,.35);background:rgba(34,211,238,.08);
+    font-family:var(--font-code);font-size:10.5px;letter-spacing:.04em;color:var(--whisper);
+  }
+  .qg-history b{color:var(--voice)}
+  .qg-history button{
+    margin-left:auto;cursor:pointer;font-family:var(--font-code);font-size:10px;
+    padding:5px 10px;border-radius:var(--r-pill);
+    border:1px solid var(--iris,#22D3EE);background:transparent;color:var(--iris,#22D3EE);
+  }
+  .qg-history button:hover{background:rgba(34,211,238,.18);color:var(--voice)}
+
+  /* ===== companion agent pane ===== */
+  #qrail-agent{display:flex;flex-direction:column;height:100%;min-height:0}
+  .ag-log{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;
+          flex-direction:column;gap:8px;padding-bottom:8px}
+  .ag-msg{
+    font-size:11.5px;line-height:1.6;padding:9px 11px;border-radius:10px;
+    border:1px solid var(--rim-08);color:var(--echo);white-space:pre-wrap;word-break:break-word;
+  }
+  .ag-msg.bot{background:var(--haze-04)}
+  .ag-msg.you{background:rgba(34,211,238,.13);border-color:rgba(34,211,238,.35);color:var(--voice)}
+  .ag-msg.err{background:rgba(255,0,51,.10);border-color:rgba(255,0,51,.35)}
+  .ag-msg.think{color:var(--footstep);font-style:italic}
+  .ag-input{flex:0 0 auto;display:flex;gap:6px;align-items:flex-end;padding-top:8px;
+            border-top:1px solid var(--rim-08)}
+  .ag-input textarea{
+    flex:1;resize:none;border-radius:9px;padding:8px 9px;
+    background:rgba(0,0,0,.45);border:1px solid var(--rim-08);color:var(--echo);
+    font-family:var(--font-voice);font-size:11.5px;line-height:1.5;
+  }
+  .ag-input textarea:focus{outline:none;border-color:var(--iris,#22D3EE)}
+  .ag-input button{
+    flex:0 0 auto;width:34px;height:34px;border-radius:9px;cursor:pointer;
+    border:1px solid var(--iris,#22D3EE);background:rgba(34,211,238,.16);
+    color:var(--iris,#22D3EE);font-size:13px;
+  }
+  .ag-input button:hover{background:rgba(34,211,238,.28);color:var(--voice)}
+  .ag-input button[disabled]{opacity:.45;cursor:not-allowed}
+
+  @media (max-width:820px){
+    .qrail{flex-basis:180px;width:180px}
   }
 
   /* ===== INDICATOR BAR ===== */
@@ -510,12 +1003,76 @@
 </div>
 
 <div class="body-container">
+  <!-- PANE 1 · decision git graph — collapses to a thin spine, no labels -->
+  <aside class="grail" id="grail">
+    <div class="grail-head">
+      <span class="lbl">Workgraph</span>
+      <button class="grail-filter on" id="grail-filter" title="Show/hide the layer filters">&#9776;</button>
+      <button class="grail-toggle" id="grail-toggle" title="Collapse to spine">&#9664;</button>
+    </div>
+    <div class="grail-views">
+      <button class="vchip on" data-v="layers" title="Group by layer">layers</button>
+      <button class="vchip" data-v="time" title="Chronological spine">timeline</button>
+    </div>
+    <div class="grail-filters" id="grail-filters">
+      <button class="fchip" data-f="done">decided <b>0</b></button>
+      <button class="fchip" data-f="superseded">superseded <b>0</b></button>
+      <button class="fchip" data-f="outbound">outbound <b>0</b></button>
+      <button class="fchip" data-f="inbound">inbound <b>0</b></button>
+      <button class="fchip" data-f="adjacent">adjacent <b>0</b></button>
+      <button class="fchip" data-f="parked">parked <b>0</b></button>
+      <button class="fchip" data-f="open">open <b>0</b></button>
+    </div>
+    <div class="grail-body"><div id="qrail-graph"></div></div>
+  </aside>
+  <div class="rail-resizer" data-target="grail"></div>
+
+  <!-- PANE 2 · agent / multi-state box — collapses to a tab -->
+  <script>
+/* PRE-PAINT COLLAPSE GUARD. The rail markup carries no `collapsed` class and the
+   CSS default is flex:0 0 268px, so on reload the chat rail PAINTS OPEN and is
+   only snapped shut later when helper.js runs -- a visible flash whenever it was
+   closed before the reload. This runs before the element paints and settles the
+   question up front. helper.js clears the flag as soon as it owns the state. */
+(function(){var d=document.documentElement;
+/* Suppress rail transitions for the first paint. Without this the rails ANIMATE
+   into their restored position on every load, which reads as a glitch rather
+   than as state being restored. Released after two frames, once layout settles. */
+d.classList.add('no-anim');
+try{var v=sessionStorage.getItem('arail-collapsed');
+if(v===null||v==='1'){d.classList.add('pre-arail-collapsed');}}catch(e){}
+requestAnimationFrame(function(){requestAnimationFrame(function(){
+  d.classList.remove('no-anim');});});})();
+</script>
+<aside class="arail" id="arail">
+    <div class="arail-body">
+      <div class="qrail-pane" data-mode="agent" id="qrail-agent">
+        <div class="ag-log" id="ag-log">
+          <div class="ag-msg bot">Companion here. Ask me about this session — decisions, parked threads, or what is still open.</div>
+        </div>
+        <div class="ag-input">
+          <textarea id="ag-text" rows="2" placeholder="Ask the companion…"></textarea>
+          <button id="ag-send" title="Send">&#10148;</button>
+        </div>
+      </div>
+      <div class="qrail-pane" data-mode="notes" hidden>
+        <div class="qg-empty">A future state lands here — notes, sources, or a scratchpad.</div>
+      </div>
+    </div>
+    <div class="qrail-modes">
+      <button class="qrail-mode on" data-mode="agent" title="Companion agent">&#9684; agent</button>
+      <button class="qrail-mode" data-mode="notes" title="Future state">+</button>
+    </div>
+  </aside>
+  <div class="rail-resizer" data-target="arail"></div>
+  <button class="arail-tab" id="arail-tab" title="Hide agent"><span class="tab-arrow">&#9654;</span><span class="tab-bot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6V2H8"/><path d="M15 11v2"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M20 16a2 2 0 0 1-2 2H8.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 4 20.286V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/><path d="M9 11v2"/></svg></span></button>
   <div class="main">
     <div id="claude-content">
       <!-- CONTENT -->
     </div>
   </div>
   <button class="drawer-toggle" id="drawer-toggle" title="Hide drawer">&#9654;</button>
+  <div class="rail-resizer" data-target="brainstorm-drawer" data-side="right"></div>
   <aside class="drawer" id="brainstorm-drawer">
     <section class="pane decisions-pane">
       <div class="pane-header" id="decisions-header">

@@ -3,7 +3,12 @@ name: spectrum-architect
 description: Design any process, idea, problem, or body of knowledge into an ICM (Interpretable Context Methodology) workspace — folder structure as agent architecture — or restructure an existing folder, repo, or vault into one. Use when the user wants to (1) turn a recurring workflow into an agent-runnable folder pipeline, (2) organize scattered notes, files, or knowledge into a library one AI agent can walk, (3) map a team or company as connected context ("context map", "second brain", "team brain", "knowledge base for AI"), (4) audit or restructure an existing workspace to ICM conventions, or (5) says "make this an ICM", "ICM this", "build me a workspace", or "structure this for agents".
 ---
 
-# ICM Architect
+# Spectrum Architect
+
+> Formerly `icm-architect`; that name still resolves as a deprecation alias. **ICM is the protocol,
+> Spectrum is Griot's implementation of it** — contract vs implementation, like POSIX and Linux. The
+> method below is ICM and is named ICM throughout: that is attribution to Van Clief & McDermott
+> (arXiv:2603.16021, MIT), not preference.
 
 Build workspaces where the folder structure does the orchestration. One agent, reading the right files at the right moment, replaces a multi-agent framework: numbered folders carry sequencing, hierarchy carries context scoping, plain markdown files carry state. A human can open any folder and see exactly what state the system is in, because state is just files.
 

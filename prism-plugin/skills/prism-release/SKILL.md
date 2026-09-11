@@ -1,6 +1,6 @@
 ---
 name: prism-release
-description: Create a versioned release of prism-plugin. Bumps semantic version across all version files, builds CLI binaries + VSIX + Electron + Tauri installer + NSIS installer + Cowork sideload zip, commits, tags, pushes, and creates a GitHub release with all assets. Use when the user says "release", "bump version", "new version", "cut a release", "prism-release", or wants to publish a new version.
+description: Create a versioned release of prism-plugin. Bumps semantic version across all version files, builds CLI binaries + VSIX + Electron + Tauri NSIS installer + Cowork sideload zip, commits, tags, pushes, and creates a GitHub release with all assets. Use when the user says "release", "bump version", "new version", "cut a release", "prism-release", or wants to publish a new version.
 model: sonnet
 ---
 
@@ -10,6 +10,7 @@ Full release pipeline: bump version → build all artifacts → commit → tag �
 
 **Repository**: `TheDigitalGriot/prism`
 
+> **Stuck Protocol (device/cloud recovery — non-negotiable):** if any device/cloud tool returns empty/`[]`/"not connected"/"no DOM"/403 or fails first-call, do NOT report it blocked. Retry 2-3x -> switch surface (built-in pane <-> Claude-in-Chrome; native Windows PowerShell when the sandbox has no route; the Gmail *browser* when the *connector* is the wrong account) -> replay the logs (session_info -> last successful run -> copy its exact tool sequence) -> then ask Gavin ONE direct question. Gavin's word about his own machine is GROUND TRUTH. "Blocked" without those steps is a DEFINED ERROR; a forced skip = INCOMPLETE run. Full ladder: this plugin's CLAUDE.md "Stuck Protocol" section.
 ## Headless mode (PRISM_NONINTERACTIVE)
 
 **If the `PRISM_NONINTERACTIVE` environment variable is set**, this skill runs unattended (Cowork
@@ -135,23 +136,52 @@ Load `references/build-commands.md` for the full build command reference.
 `PRISM_NONINTERACTIVE` is set, run them when `node scripts/resolve-answer.mjs nativeBuilds true`
 resolves truthy; skip and note otherwise.
 
+> **Clean the output dirs before building.** Delete
+> `apps/prism-installer/src-tauri/target/release/bundle/nsis/` and `apps/prism-electron/out/make/`
+> first. A build that no-ops leaves the *previous* version's artifact in place, and a collector
+> globbing the directory ships it as fresh — that is exactly how v4.15.0 shipped installers
+> stamped 4.13.2.
+
 #### 3a. Cross-compile CLI binaries
-`cd apps/prism-cli && make build-all` — produces 5 binaries in `apps/prism-cli/bin/`.
+`cd apps/prism-cli && make build-all VERSION={NEW_VERSION}` — produces 5 binaries in `apps/prism-cli/bin/`.
+
+> **Pass `VERSION=` explicitly — this is not optional.** The Makefile defaults to
+> `VERSION ?= $(shell git describe --tags --always --dirty)` and injects it with `-ldflags`. It does
+> **not** read the `VERSION` file or `main.go`. Because this step runs *before* the release
+> commit+tag (Step 4), a bare `make build-all` stamps the binaries with the **previous** tag plus
+> `-dirty` — e.g. `v4.15.1-4-g814b762-dirty` on what should be a 4.15.2 build. Caught by Step 3e on
+> the v4.15.2 cut; every release built without the override shipped mis-stamped CLI binaries.
 
 #### 3b. Package VSIX extension
-`npx @vscode/vsce package` from `apps/prism-vscode/` — outputs to `apps/prism-setup/resources/extensions/prism.vsix`.
+`npx @vscode/vsce package --no-dependencies -o prism-{NEW_VERSION}.vsix` from `apps/prism-vscode/`,
+then copy it to `apps/prism-installer/src-tauri/resources/extensions/prism.vsix` — the tracked
+resource the Tauri installer bundles via `tauri.conf.json` → `bundle.resources`. **Must run before
+3d**: the Tauri build fails if a declared resource is missing (fail-loud by design). The versioned
+copy ships as a standalone release asset in Step 6.
 
-#### 3c. Populate NSIS installer resources
-Copy CLI binary and plugin files into `apps/prism-setup/resources/`.
-
-#### 3d. Build Electron desktop app
+#### 3c. Build Electron desktop app
 `cd apps/prism-electron && npm run make` — outputs Squirrel installer to `out/make/squirrel.windows/x64/`.
 
-#### 3e. Build Tauri installer (Prism Setup)
+#### 3d. Build Tauri installer (Prism Setup)
 `npm run tauri build -- --bundles nsis` — outputs NSIS installer to `src-tauri/target/release/bundle/nsis/`. Use `--bundles dmg` on macOS.
 
-#### 3f. Compile legacy NSIS installer
-`makensis -V4 -DVERSION={NEW_VERSION} installer/prism-setup.nsi` — outputs `installer/Prism-Setup-{NEW_VERSION}.exe`.
+> **Known gap (tracked, not fixed in v4.15.2).** The installer's **CLI** and **plugin** components
+> still read from `installDir\binaries\` and `installDir\plugin\` — paths the legacy NSIS populated
+> and nothing in the Tauri flow does. Only the VSIX was migrated to `resolveResource`. Staging
+> `resources/bin/` and `resources/plugin/` has no effect until those two get the same treatment.
+
+#### 3e. Verify every installer by embedded version
+
+Filenames are not evidence — a stale artifact can carry a correct-looking name. Check the value
+compiled *into* each artifact:
+
+```powershell
+(Get-Item "apps/prism-electron/out/make/squirrel.windows/x64/Prism-{NEW_VERSION} Setup.exe").VersionInfo.ProductVersion
+(Get-Item "apps/prism-installer/src-tauri/target/release/bundle/nsis/Prism Setup_{NEW_VERSION}_x64-setup.exe").VersionInfo.ProductVersion
+./apps/prism-cli/bin/prism-cli-windows-amd64.exe --version
+```
+
+All three must print `{NEW_VERSION}`. A mismatch means a stale artifact survived — stop and rebuild.
 
 ### Step 4: Commit and tag
 
@@ -161,15 +191,19 @@ git add VERSION .claude-plugin/ apps/prism-cli/main.go apps/prism-cli/app/footer
   apps/prism-installer/package.json apps/prism-installer/src-tauri/Cargo.toml \
   apps/prism-installer/src-tauri/tauri.conf.json apps/prism-installer/src-tauri/src/ \
   apps/prism-installer/src/ \
-  apps/prism-setup/resources/extensions/prism.vsix \
-  apps/prism-setup/resources/plugin/ \
+  apps/prism-installer/src-tauri/resources/extensions/prism.vsix \
   packages/prism-core/src/shared/PrismState.ts \
   packages/prism-ui/src/context/PrismStateContext.tsx \
-  installer/ scripts/
+  scripts/
 
 git commit -m "v{NEW_VERSION}"
 git tag v{NEW_VERSION}
 ```
+
+> **Sunset note (v4.15.2).** `apps/prism-setup/` and `installer/` are no longer built or staged —
+> the Tauri installer supersedes them. Both trees are **retained on disk for rollback** (per
+> `bump-version.py`'s exclusion note) but are deliberately absent from the add-list above; do not
+> re-add them.
 
 **Headless (R6 / dryRun):** commit + tag are the first irreversible steps. Under
 `PRISM_NONINTERACTIVE`, if `node scripts/resolve-answer.mjs dryRun true` resolves truthy, **stop
@@ -234,8 +268,10 @@ gh release upload v{NEW_VERSION} \
 gh release upload v{NEW_VERSION} \
   "apps/prism-installer/src-tauri/target/release/bundle/nsis/Prism Setup_{NEW_VERSION}_x64-setup.exe"
 
+# The VSIX also ships standalone so users can install the extension without
+# running an installer (it is bundled inside the Tauri installer as well).
 gh release upload v{NEW_VERSION} \
-  installer/Prism-Setup-{NEW_VERSION}.exe
+  apps/prism-vscode/prism-{NEW_VERSION}.vsix
 
 # Step 6d: Upload the Cowork sideload zip (built in Step 4.5)
 gh release upload v{NEW_VERSION} \
@@ -249,8 +285,13 @@ The release should include 9 assets:
 - 5 CLI binaries (all platforms)
 - 1 Electron desktop app installer (`Prism-{VERSION} Setup.exe`)
 - 1 Tauri installer (`Prism Setup_{VERSION}_x64-setup.exe`)
-- 1 Legacy NSIS all-in-one installer (`Prism-Setup-{VERSION}.exe`)
+- 1 VSIX extension (`prism-{VERSION}.vsix`)
 - 1 Cowork sideload zip (`prism-sideload-{VERSION}.zip`)
+
+The macOS `.dmg` is built and uploaded separately by
+`.github/workflows/prism-installer-release.yml` when the tag is pushed, so a completed release
+shows 10 assets once CI finishes. **Verify the asset list after CI** — v4.15.0 published assets
+stamped `4.13.2`, which the count alone would not have caught.
 
 ### Step 6.5: Sync the plugin-only mirror
 
@@ -365,15 +406,20 @@ Print a summary with the release URL, snapshot path, and eval case counts.
 - If `make build-all` fails: check that Go 1.22+ is installed
 - If `npm run make` fails: check Electron Forge dependencies with `cd apps/prism-electron && npm install`
 - If `tauri build` fails: check Rust toolchain with `rustup show`, ensure NSIS is installed for bundling
-- **NSIS / `makensis` — the recurring gotcha (read before Step 3e/3f):** NSIS is almost always
+- **If `tauri build` fails on a missing resource:** run Step 3b first. `bundle.resources` declares
+  `resources/extensions/prism.vsix`, and the build fails loudly when it is absent — that is
+  deliberate, and it is the guard that replaced the silent no-op which shipped stale artifacts.
+- **If `tauri build` succeeds but produces no installer:** check `tauri.conf.json` →
+  `bundle.targets`. An explicit empty array (`[]`) bundles **nothing** in Tauri v2 and still exits
+  0. It must be `["nsis"]`. This was the v4.15.0/4.15.1 stale-artifact root cause.
+- **NSIS / `makensis` — the recurring gotcha (read before Step 3d):** NSIS is almost always
   *already installed* on this machine but **not on `PATH`**, so `command -v makensis` (and any
   preflight toolchain check) reports it "missing" when it is not. **Before concluding NSIS is
   absent, check the default install path** `C:\Program Files (x86)\NSIS\makensis.exe` — it's
-  usually there. Invoke it by full path in Step 3f and for Tauri's NSIS bundling:
-  `"/c/Program Files (x86)/NSIS/makensis.exe" -V4 -DVERSION={NEW_VERSION} installer/prism-setup.nsi`.
-  Only if that path truly doesn't exist do you need `winget install NSIS.NSIS` (idempotent — it
-  reports "already installed" when present). Do NOT skip the NSIS assets or ask the user just
-  because `makensis` isn't on `PATH`.
+  usually there. Tauri drives its own `makensis` for `--bundles nsis`, so this mostly bites
+  preflight checks. Only if that path truly doesn't exist do you need `winget install NSIS.NSIS`
+  (idempotent — it reports "already installed" when present). Do NOT skip the NSIS asset or ask
+  the user just because `makensis` isn't on `PATH`.
 - If git push fails: report the error, do NOT force-push
 - If `gh release create` fails because the tag already exists: ask the user if they want to delete and recreate.
   **Headless (R5):** if `PRISM_NONINTERACTIVE` is set, do not ask — resolve
