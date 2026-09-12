@@ -1,6 +1,6 @@
 ---
 name: digest-writer
-description: Summarizes YouTube video transcripts into concise, information-dense digests. Use for: single-video URL analysis (creates session, fills comparison_data.json, launches viewer at http://localhost:5123), standalone transcript summarization (get_transcript.py), and batch channel digests (digest_all.py).
+description: "Summarizes YouTube video transcripts into concise, information-dense digests. Use for: single-video URL analysis (creates session, fills comparison_data.json, launches viewer at http://localhost:5123), standalone transcript summarization (get_transcript.py), and batch channel digests (digest_all.py)."
 model: sonnet
 color: cyan
 effort: medium

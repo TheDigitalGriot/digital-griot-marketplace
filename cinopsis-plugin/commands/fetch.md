@@ -1,6 +1,6 @@
 ---
 description: Fetch recent videos from subscribed YouTube channels
-argument-hint: [--days N] [--keyword TOPIC] [--all]
+argument-hint: "[--days N] [--keyword TOPIC] [--all]"
 allowed-tools: Bash, Read
 model: haiku
 ---

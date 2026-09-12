@@ -14,6 +14,7 @@ Usage:
 """
 import argparse
 import json
+import time
 from pathlib import Path
 
 from _utils import DATA_DIR
@@ -28,22 +29,32 @@ def main():
     ap = argparse.ArgumentParser(description="Batch / resumable transcript cache")
     ap.add_argument("--ids", nargs="+", required=True, help="YouTube video IDs")
     ap.add_argument("--chunk", type=int, default=5,
-                    help="Max IDs to fetch this call (default 5; keeps each call under the bridge cap)")
+                    help="Max IDs to fetch this call (default 5; HARD-CAPPED at 5 — anti-hammer)")
     ap.add_argument("--refresh", action="store_true", help="Re-fetch even if cached")
     args = ap.parse_args()
+
+    # HARD ANTI-HAMMER CAP: never fetch more than 5 IDs per invocation, no matter
+    # what --chunk says. This is structural so a bad driver/loop cannot burst the IP.
+    MAX_CHUNK = 5
+    THROTTLE_SEC = 5  # minimum gap between individual fetches within a call
+    effective_chunk = max(1, min(args.chunk, MAX_CHUNK))
+    if args.chunk > MAX_CHUNK:
+        print(f"[cap] --chunk {args.chunk} clamped to {MAX_CHUNK} (hard anti-hammer cap)", flush=True)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     progress_file = DATA_DIR / "fetch_progress.json"
 
     todo = [v for v in args.ids if args.refresh or not is_cached(v)]
     cached_before = [v for v in args.ids if not args.refresh and is_cached(v)]
-    batch = todo[:args.chunk]
+    batch = todo[:effective_chunk]
 
     print(f"{len(args.ids)} ids | {len(cached_before)} already cached | "
           f"{len(todo)} to fetch | this call: {len(batch)}", flush=True)
 
     results = {}
-    for vid in batch:
+    for idx, vid in enumerate(batch):
+        if idx > 0:
+            time.sleep(THROTTLE_SEC)  # space fetches so a batch is a drip, not a burst
         print(f"\n== {vid} ==", flush=True)
         t, lang, method = fetch_transcript(vid, allow_cache=not args.refresh, refresh=args.refresh)
         if t:

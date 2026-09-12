@@ -20,6 +20,61 @@ def canonical_data_dir() -> Path:
     return Path.home() / ".claude" / "plugins" / "data" / "cinopsis-cinopsis"
 
 
+COOKIE_FILENAME = "cookies.txt"
+
+
+def cookie_targets():
+    """Every path the cookie exporter should write the jar to, de-duplicated.
+
+    Order: $CINOPSIS_COOKIES (when set) -> DATA_DIR/cookies.txt -> the canonical
+    data dir's cookies.txt. Under the plugin CLAUDE_PLUGIN_DATA makes DATA_DIR and
+    canonical_data_dir() the same directory, so this collapses to one path; in a bare
+    dev run they diverge and BOTH need the jar (the readers check both -- see
+    resolve_cookies). Returns a list[Path]; parent dirs are NOT created here.
+    """
+    candidates = []
+    env = os.environ.get("CINOPSIS_COOKIES")
+    if env:
+        candidates.append(Path(env))
+    candidates.append(DATA_DIR / COOKIE_FILENAME)
+    candidates.append(canonical_data_dir() / COOKIE_FILENAME)
+    seen, out = set(), []
+    for cand in candidates:
+        key = os.path.normcase(os.path.abspath(str(cand)))
+        if key not in seen:
+            seen.add(key)
+            out.append(cand)
+    return out
+
+
+def resolve_cookies(cookies=None):
+    """Resolve a cookies.txt path for yt-dlp so PRIVATE/unlisted videos are reachable.
+
+    Precedence: explicit path -> $CINOPSIS_COOKIES -> DATA_DIR/cookies.txt ->
+    canonical_data_dir()/cookies.txt (each of the last two only if it exists).
+    Returns a path str, or None when no jar is available (public content still works).
+
+    $CINOPSIS_COOKIES is returned WITHOUT an existence check on purpose: if the user
+    named a jar explicitly, yt-dlp should fail loudly on a bad path rather than
+    silently degrade to anonymous. The canonical rung is what keeps a bare dev run
+    (DATA_DIR = <repo>/data) able to read a jar the exporter wrote to the plugin dir.
+
+    A file-based cookies.txt (Netscape format) is used instead of yt-dlp's
+    --cookies-from-browser: on Windows the latter fails with "Failed to decrypt with
+    DPAPI" against Chrome App-Bound Encryption (yt-dlp #10927). An exported file
+    sidesteps that. Written by scripts/export_yt_cookies.py.
+    """
+    if cookies:
+        return str(cookies)
+    env = os.environ.get("CINOPSIS_COOKIES")
+    if env:
+        return env
+    for cand in (DATA_DIR / COOKIE_FILENAME, canonical_data_dir() / COOKIE_FILENAME):
+        if cand.exists():
+            return str(cand)
+    return None
+
+
 def find_ytdlp():
     """Find yt-dlp, preferring the running interpreter's own venv binary.
 

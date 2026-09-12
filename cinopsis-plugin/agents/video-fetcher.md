@@ -15,6 +15,7 @@ Lightweight agent for YouTube video fetching and listing operations.
 ## Capabilities
 
 - Run fetch_videos.py with appropriate flags (--days, --all, --keyword)
+- Run fetch_playlist.py to surface newly-added playlist videos (id-based seen-diff; --all / --seed / --name)
 - Read and display videos.json results
 - Check channel configuration in data/channels.json
 - List available transcripts and digest files
@@ -27,3 +28,4 @@ Lightweight agent for YouTube video fetching and listing operations.
 - Display results in a clean numbered list with title, channel, date, and duration
 - Do NOT summarize or analyze video content — hand off to digest-writer or video-comparator for that
 - If the user asks for a summary after fetching, tell them to use /digest or /compare
+- For playlists, just LIST the new ids fetch_playlist.py surfaces and echo the two handoff commands it prints (fetch_transcripts.py, then compare_videos.py --from-cache); the script writes its own seen manifest via subprocess, so no Write/Edit is needed

@@ -50,6 +50,19 @@ def fetch_channel_videos(channel, days=3):
         url
     ]
 
+    # Anti-hammer gate (shared chokepoint): refuse WITHOUT touching the network
+    # while a cooldown is active; else enforce minimum spacing between calls.
+    try:
+        import ratelimit
+    except Exception:
+        ratelimit = None
+    if ratelimit is not None:
+        try:
+            ratelimit.check_gate("channel")
+        except ratelimit.RateLimited as e:
+            print(f"  {e}")
+            return []
+
     try:
         result = subprocess.run(
             cmd,
@@ -58,6 +71,11 @@ def fetch_channel_videos(channel, days=3):
             timeout=60,
             env=get_env()
         )
+        if ratelimit is not None:
+            if result.returncode != 0:
+                ratelimit.record_outcome(False, (result.stderr or "")[:200])
+            else:
+                ratelimit.record_outcome(True)
         videos = []
         for line in result.stdout.strip().split("\n"):
             if not line:

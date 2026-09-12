@@ -40,7 +40,24 @@ def get_stream_url(video_id):
         "--format", "best[height<=720]",
         f"https://www.youtube.com/watch?v={video_id}",
     ]
+    # Anti-hammer gate (shared chokepoint): refuse WITHOUT touching the network
+    # while a cooldown is active; else enforce minimum spacing between calls.
+    try:
+        import ratelimit
+    except Exception:
+        ratelimit = None
+    if ratelimit is not None:
+        try:
+            ratelimit.check_gate("frames")
+        except ratelimit.RateLimited as e:
+            print(f"  {e}")
+            return None
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=get_env(), stdin=subprocess.DEVNULL)
+    if ratelimit is not None:
+        if result.returncode != 0:
+            ratelimit.record_outcome(False, (result.stderr or "")[:200])
+        else:
+            ratelimit.record_outcome(True)
     if result.returncode != 0 or not result.stdout.strip():
         return None
     urls = result.stdout.strip().split("\n")

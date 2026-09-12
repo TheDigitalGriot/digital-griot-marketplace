@@ -1,6 +1,6 @@
 ---
 name: video-comparator
-description: Deep cross-video analysis comparing multiple YouTube videos on the same topic. Use for: compare_videos.py workflows with 2+ URLs, finding creator disagreements, synthesizing unified summaries across sources, launching the interactive comparison viewer.
+description: "Deep cross-video analysis comparing multiple YouTube videos on the same topic. Use for: compare_videos.py workflows with 2+ URLs, finding creator disagreements, synthesizing unified summaries across sources, launching the interactive comparison viewer."
 model: opus[1m]
 color: magenta
 effort: xhigh

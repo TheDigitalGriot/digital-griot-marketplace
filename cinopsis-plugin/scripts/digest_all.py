@@ -2,12 +2,19 @@
 """Batch-process videos into a Markdown digest with optional transcripts."""
 import json
 import os
+import time
 import argparse
 from datetime import datetime
 from pathlib import Path
 
 from fetch_videos import main as fetch_main, DATA_DIR as FETCH_DATA_DIR, OUTPUT_FILE as VIDEOS_FILE
-from get_transcript import get_transcript_ytdlp, format_transcript
+from get_transcript import fetch_transcript, format_transcript
+
+# HARD ANTI-HAMMER CAP - mirrors fetch_transcripts.py. This loop walks every video
+# in the digest, so without a cap a single run could fire dozens of transcript
+# fetches back to back. Structural, so a bad driver cannot burst the IP.
+MAX_DIGEST_TRANSCRIPTS = 5
+DIGEST_THROTTLE_SEC = 5
 
 DATA_DIR = Path(os.environ.get("CLAUDE_PLUGIN_DATA", Path(__file__).parent.parent / "data"))
 OUTPUT_DIR = DATA_DIR / "output"
@@ -38,6 +45,10 @@ def generate_digest(videos, include_transcript=True, limit=10):
     md += f"> {len(videos)} AI-related videos\n\n"
     md += "---\n\n"
 
+    # Per-run transcript budget. Dict so the loop body can mutate it without
+    # a `nonlocal`/global dance.
+    _fetched = {"n": 0}
+
     for i, video in enumerate(videos, 1):
         title = video.get("title", "Unknown")
         channel = video.get("channel_name", "Unknown")
@@ -53,8 +64,32 @@ def generate_digest(videos, include_transcript=True, limit=10):
         md += f"- **Link**: {url}\n\n"
 
         if include_transcript and video_id:
+            if _fetched["n"] >= MAX_DIGEST_TRANSCRIPTS:
+                md += (f"*Transcript skipped - digest cap of "
+                       f"{MAX_DIGEST_TRANSCRIPTS} transcripts per run reached. "
+                       f"Run `fetch_transcripts.py` to drip the rest.*\n\n")
+                md += "### Summary (to be filled by Claude)\n\n"
+                md += "[Claude: read the transcript above and write a summary here]\n\n"
+                md += "---\n\n"
+                continue
+            if _fetched["n"] > 0:
+                time.sleep(DIGEST_THROTTLE_SEC)
             print(f"  Fetching transcript for: {title}...", flush=True)
-            transcript, lang = get_transcript_ytdlp(video_id)
+            # Goes through the FULL gated ladder (cache -> innertube -> api ->
+            # yt-dlp -> asr -> cdp), not a raw rung. Previously this called
+            # get_transcript_ytdlp directly, which bypassed the cache, the
+            # Door-2 rung, and the rate-limit gate entirely - an ungated bulk
+            # loop against a flagged IP.
+            transcript, lang, method = fetch_transcript(video_id)
+            if method != "cache":
+                _fetched["n"] += 1
+            if method == "rate-limited":
+                md += ("*Transcript unavailable - rate-limit gate is cooling down. "
+                       "No request was made.*\n\n")
+                md += "### Summary (to be filled by Claude)\n\n"
+                md += "[Claude: read the transcript above and write a summary here]\n\n"
+                md += "---\n\n"
+                continue
             if transcript:
                 formatted = format_transcript(transcript)
                 # Save individual transcript
