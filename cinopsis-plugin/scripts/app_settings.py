@@ -10,7 +10,7 @@ from pathlib import Path
 
 DEFAULTS = {
     "provider": "claude_sub",                  # claude_sub | claude_key | local
-    "model": "claude-sonnet-4-6",              # used by claude_key
+    "model": "claude-sonnet-5-5",               # used by claude_key (bumped 2026-09-30; was pinned 2 versions stale at claude-sonnet-4-6)
     "anthropic_api_key": "",                   # fallback key (Q4 -> B)
     "local_base_url": "http://localhost:11434/v1",
     "local_model": "",

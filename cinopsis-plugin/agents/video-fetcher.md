@@ -3,7 +3,6 @@ name: video-fetcher
 description: Fast agent for fetching YouTube video lists, checking channels, and running simple queries. Use for any task that only needs fetch_videos.py or listing available data — no summarization or analysis needed.
 model: haiku
 color: green
-effort: low
 maxTurns: 8
 disallowedTools: Write, Edit, NotebookEdit, Agent
 ---

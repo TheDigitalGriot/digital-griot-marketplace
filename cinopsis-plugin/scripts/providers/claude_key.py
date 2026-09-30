@@ -7,7 +7,7 @@ class ClaudeKeyProvider:
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
         self.api_key = api_key
-        self.model = model or "claude-sonnet-4-6"
+        self.model = model or "claude-sonnet-5-5"  # bumped 2026-09-30; was pinned 2 versions stale
 
     def stream(self, context: str, question: str):
         import anthropic
