@@ -9,80 +9,49 @@ human would, and reads the segments straight out of the DOM. This is the
 method that provably worked (474 segments) on a rate-limit-flagged residential
 IP where every HTTP door was refused.
 
-Mirrors export_yt_cookies.py's CDP pattern exactly (same dedicated profile,
-same launch flags, same websocket transport) rather than inventing a new one.
-Key differences from export_yt_cookies:
-  - a DIFFERENT default debug port (9333 vs 9222) so a cookie export and a
-    transcript grab can never collide if both happen to run at once.
+Session acquisition (which Chrome, which profile, attach-vs-launch, the
+profile-lock problem) is NOT owned here - it is chrome_session.py's job (D3,
+"ONE ORIGINAL"), shared verbatim with panel_transcript.py. This module only
+drives the transcript panel once it has a browser websocket endpoint.
+
   - windowed, never headless -- headless does not render the transcript
-    panel (confirmed live).
-  - opt-in only via $CINOPSIS_ENABLE_CDP -- Cowork/cloud/CI runs have no
-    Bash tool and must never pop a browser window by accident.
+    panel (confirmed live, F3).
+  - ON by default (Gavin's call, 2026-09-18) - see cdp_enabled()'s docstring
+    for why the old opt-in-only default was itself the root cause of the
+    outage this contract fixes. $CINOPSIS_ENABLE_CDP=0 opts back out.
 
 Usage:
-  CINOPSIS_ENABLE_CDP=1 python grab_transcript_cdp.py --video-id XXXXXXXXXXX
+  python grab_transcript_cdp.py --video-id XXXXXXXXXXX
 """
 import argparse
-import json
+import json   # used by the CDP transport (ws send/recv) and the click template
 import os
 import sys
 import time
-from urllib.request import urlopen
 
-from export_yt_cookies import PROFILE_DIR, find_chrome
+import chrome_session
 
-# A DIFFERENT default port from export_yt_cookies' 9222 so a cookie export and
-# a transcript grab can't collide if both happen to be running.
-CDP_PORT = int(os.environ.get("CINOPSIS_CDP_PORT", "9333"))
-
-# Opt-in flag. Cowork has NO Bash tool and cloud/CI/headless runs must never
-# try to pop a browser window -- this rung is opt-in, and every entry point
-# (grab, get_transcript_cdp, and eventually the ladder) must respect it.
+_FALSY = {"0", "false", "no", "off"}
 ENABLE_ENV = "CINOPSIS_ENABLE_CDP"
-
-_TRUTHY = {"1", "true", "yes", "on"}
 
 
 def cdp_enabled():
-    """True only when $CINOPSIS_ENABLE_CDP is set to a truthy value. Default OFF."""
-    val = os.environ.get(ENABLE_ENV, "")
-    return val.strip().lower() in _TRUTHY
+    """True unless $CINOPSIS_ENABLE_CDP is explicitly set to a falsy value.
 
-
-# ---------------------------------------------------------------------------
-# Chrome launch (mirrors export_yt_cookies.launch_chrome, windowed only)
-# ---------------------------------------------------------------------------
-def _launch_chrome(chrome, port):
-    import subprocess
-
-    os.makedirs(PROFILE_DIR, exist_ok=True)
-    args = [
-        chrome,
-        "--user-data-dir=" + PROFILE_DIR,
-        "--remote-debugging-port=" + str(port),
-        "--remote-allow-origins=*",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--new-window",
-        "about:blank",
-    ]
-    # WINDOWED -- NOT headless. Headless does not render the transcript panel;
-    # this is confirmed live. Do NOT add --headless here.
-    return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-def _browser_ws_url(port, timeout=25):
-    """Poll http://127.0.0.1:<port>/json/version for the browser websocket URL."""
-    deadline = time.time() + timeout
-    last = None
-    while time.time() < deadline:
-        try:
-            with urlopen("http://127.0.0.1:%d/json/version" % port, timeout=2) as r:
-                return json.load(r)["webSocketDebuggerUrl"]
-        except Exception as e:
-            last = e
-            time.sleep(0.5)
-    raise RuntimeError("Chrome DevTools endpoint never came up on port %d: %s" % (port, last))
+    ON BY DEFAULT (flipped 2026-09-18). The old default was opt-in-only, and
+    F1 root-caused the entire multi-week YT-playlist outage to exactly that:
+    the rung built to survive an IP flag never ran because nothing ever set
+    the flag. Turning it on is the fix, not a workaround - see
+    chrome_session.py for why this no longer risks an unwanted browser
+    launch: with Chrome already open (the common case, per Gavin), this rung
+    ATTACHES to the existing session instead of spawning a new window.
+    $CINOPSIS_ENABLE_CDP=0/false/off remains the escape hatch for a
+    non-interactive context with no display.
+    """
+    val = os.environ.get(ENABLE_ENV, "").strip().lower()
+    if val in _FALSY:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +212,7 @@ def parse_timestamp(ts):
 # grab() -- the CDP rung itself. Returns plain text, or None on ANY failure.
 # ---------------------------------------------------------------------------
 def grab(video_id, timeout=45):
-    """Drive a dedicated, logged-in Chrome to the video's transcript panel and
+    """Drive Gavin's Chrome Profile 1 to the video's transcript panel and
     return the transcript as text, or None on any failure (opt-in disabled,
     Chrome missing, timeout, panel never appeared, etc).
 
@@ -256,28 +225,24 @@ def grab(video_id, timeout=45):
     deadline = time.time() + timeout
 
     if not cdp_enabled():
-        print(f"[cdp] {ENABLE_ENV} not set; skipping CDP rung (opt-in only)", flush=True)
-        return None
-
-    try:
-        chrome = find_chrome()
-    except SystemExit:
-        # find_chrome() calls sys.exit() when Chrome isn't found. SystemExit is
-        # BaseException, not Exception -- caught explicitly here so a missing
-        # Chrome degrades this rung instead of tearing down the whole process.
-        print("[cdp] Chrome not found; skipping CDP rung", flush=True)
+        print(f"[cdp] {ENABLE_ENV}=0; skipping CDP rung (explicitly disabled)", flush=True)
         return None
 
     proc = None
+    owns_process = False
     ws = None
+    session_id = None
+    target_id = None
     try:
-        proc = _launch_chrome(chrome, CDP_PORT)
-
         remaining = _remaining(deadline)
         if remaining <= 0:
-            print("[cdp] timeout budget exhausted before websocket discovery", flush=True)
+            print("[cdp] timeout budget exhausted before session acquisition", flush=True)
             return None
-        browser_ws_url = _browser_ws_url(CDP_PORT, timeout=remaining)
+        try:
+            browser_ws_url, owns_process, proc = chrome_session.acquire_session(timeout=remaining)
+        except chrome_session.ChromeProfileLockedError as e:
+            print(f"[cdp] {e}", flush=True)
+            return None
 
         import websocket  # websocket-client
 
@@ -335,12 +300,22 @@ def grab(video_id, timeout=45):
         print(f"[cdp] grab failed: {type(e).__name__}: {e}", flush=True)
         return None
     finally:
+        # Ownership contract (chrome_session.py): close only the TARGET we
+        # opened, always -- but only terminate the whole Chrome PROCESS when
+        # this call launched it itself. An attached session is Gavin's live
+        # browser (or a prior cinopsis run's); tearing it down out from under
+        # him is exactly the failure this module exists to never cause again.
+        if ws is not None and session_id and target_id:
+            try:
+                _send_bounded(cdp, "Target.closeTarget", {"targetId": target_id}, deadline=time.time() + 5)
+            except Exception:
+                pass
         if ws is not None:
             try:
                 ws.close()
             except Exception:
                 pass
-        if proc is not None:
+        if owns_process and proc is not None:
             proc.terminate()
             try:
                 proc.wait(timeout=10)
@@ -393,15 +368,16 @@ def main():
         description="Fetch a YouTube transcript via a real Chrome + CDP (guaranteed-fallback rung)"
     )
     parser.add_argument("--video-id", required=True, help="YouTube video ID")
-    parser.add_argument("--port", type=int, default=CDP_PORT, help="Chrome remote-debugging port")
+    parser.add_argument("--port", type=int, default=chrome_session.DEBUG_PORT,
+                         help="Chrome remote-debugging port")
     args = parser.parse_args()
-    globals()["CDP_PORT"] = args.port
+    chrome_session.DEBUG_PORT = args.port
 
     transcript, lang = get_transcript_cdp(args.video_id)
     if not transcript:
         print(
-            "CDP transcript grab failed. Check that CINOPSIS_ENABLE_CDP is set, "
-            "Chrome is installed, and the dedicated profile is signed into YouTube."
+            "CDP transcript grab failed. Check that CINOPSIS_ENABLE_CDP is not set to "
+            "0/false, Chrome is installed, and Profile 1 is signed into YouTube."
         )
         sys.exit(1)
 

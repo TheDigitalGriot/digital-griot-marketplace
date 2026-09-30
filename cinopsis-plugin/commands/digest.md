@@ -14,7 +14,9 @@ cd ${CLAUDE_PLUGIN_ROOT} first, then follow these steps:
 2. Write `${CLAUDE_PLUGIN_DATA}/session_progress.json`:
    `{"session_dir": "SESSION_DIR", "transcripts_read": [], "status": "starting"}`
 
-3. Read the FULL transcript: `data/sessions/SESSION_DIR/_transcripts/VIDEO_ID.txt`
+3. Read the FULL transcript: `${CLAUDE_PLUGIN_DATA}/transcript_VIDEO_ID.txt`
+   (written flat into the data dir by `compare_videos.py`, not into the session dir;
+   falls back to `data/transcript_VIDEO_ID.txt` when CLAUDE_PLUGIN_DATA is unset)
    Do not skim. Update session_progress.json with `"transcripts_read": ["VIDEO_ID"], "status": "transcript_read"`.
 
 4. Read comparison_data.json from the session, then write back these fields:

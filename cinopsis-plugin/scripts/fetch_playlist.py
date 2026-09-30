@@ -68,6 +68,31 @@ def load_playlists():
         return json.load(f).get("playlists", [])
 
 
+def find_playlist_by_list_id(list_id):
+    """Look up the data/playlists.json entry whose id/url/url_or_id resolves to list_id.
+
+    Returns None if no entry matches -- callers must treat that (and a missing
+    "sort" key on a matched entry) as "unknown", never infer a sort mode from
+    position or any other signal (contract: read, never detect).
+    """
+    for p in load_playlists():
+        candidates = {
+            p.get("id"),
+            parse_list_id(p.get("url") or ""),
+            parse_list_id(p.get("url_or_id") or ""),
+        }
+        if list_id in candidates:
+            return p
+    return None
+
+
+def get_playlist_sort(list_id):
+    """The recorded sort mode for list_id (e.g. "date_added_newest"), or None if
+    the playlist is unlisted in data/playlists.json or carries no "sort" key yet.
+    None/"unverified" both mean: do not trust top-of-list-is-newest for this one.
+    """
+    entry = find_playlist_by_list_id(list_id)
+    return entry.get("sort") if entry else None
 
 
 def fetch_playlist_entries(list_id, playlist_end=None, cookies=None):
@@ -230,11 +255,15 @@ def fetch_playlist_new(ref=None, name=None, *, playlist_end=None, force_all=Fals
         match = next((p for p in load_playlists() if p.get("name") == name), None)
         if not match:
             raise ValueError(f"No playlist named {name!r} in data/playlists.json")
-        ref = match.get("url_or_id")
+        # Key mismatch fallthrough: some callers may carry url_or_id (checked
+        # first so they stay unaffected); data/playlists.json today stores
+        # url then id -- fall through to whichever key is actually present.
+        ref = match.get("url_or_id") or match.get("url") or match.get("id")
     if not ref:
         raise ValueError("Provide a playlist url/id or a --name from data/playlists.json")
 
     list_id = parse_list_id(ref)
+    sort_mode = get_playlist_sort(list_id)
     cookies_path = resolve_cookies(cookies)
     entries = fetch_playlist_entries(list_id, playlist_end, cookies=cookies_path)
     all_ids = [e["id"] for e in entries]
@@ -250,7 +279,7 @@ def fetch_playlist_new(ref=None, name=None, *, playlist_end=None, force_all=Fals
             "list_id": list_id, "total_entries": len(entries),
             "new": [], "new_ids": [], "first_run": first_run,
             "seeded_only": True, "seeded": len(all_ids),
-            "cookies_used": bool(cookies_path),
+            "cookies_used": bool(cookies_path), "sort_mode": sort_mode,
         }
 
     if force_all:
@@ -282,7 +311,7 @@ def fetch_playlist_new(ref=None, name=None, *, playlist_end=None, force_all=Fals
         "new": surfaced, "new_ids": [e["id"] for e in surfaced],
         "backlog_new": len(new), "remaining": remaining, "cap": cap,
         "first_run": first_run, "seeded_only": False, "seeded": 0,
-        "cookies_used": bool(cookies_path),
+        "cookies_used": bool(cookies_path), "sort_mode": sort_mode,
     }
 
 

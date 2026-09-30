@@ -1160,10 +1160,28 @@ def get_transcript_asr(video_id):
             return None, None
         model_size = os.environ.get("CINOPSIS_WHISPER_MODEL", "base")
         print(f"  [asr] transcribing with faster-whisper ({model_size})...", flush=True)
-        model = WhisperModel(model_size, device="auto", compute_type="int8")
-        segments, info = model.transcribe(audio)
-        transcript = [{"start": float(seg.start), "text": seg.text.strip()}
-                      for seg in segments if seg.text and seg.text.strip()]
+        # device="auto" picks CUDA whenever a GPU is visible, but a CUDA-less or
+        # partially-installed toolchain raises at LOAD time (cublas64_12.dll is not
+        # found or cannot be loaded). That killed the whole rung instead of degrading
+        # it, so a caption-less video had no path at all while the timedtext door was
+        # cooling. Fall back to CPU: slower, but it needs no GPU and no YouTube door.
+        def _run(dev):
+            # NOTE: faster-whisper resolves CUDA LAZILY. With device="auto" the
+            # constructor can succeed on a machine with no usable CUDA and then
+            # raise at the first transcribe() - observed 2026-09-18 as
+            # "Library cublas64_12.dll is not found or cannot be loaded" AFTER
+            # "[asr] transcribing..." had already printed. So the whole
+            # construct-and-transcribe has to be retried, not just the load.
+            m = WhisperModel(model_size, device=dev, compute_type="int8")
+            segs, inf = m.transcribe(audio)
+            return ([{"start": float(g.start), "text": g.text.strip()}
+                     for g in segs if g.text and g.text.strip()], inf)
+        try:
+            transcript, info = _run("auto")
+        except Exception as _gpu_err:
+            print(f"  [asr] GPU path failed ({type(_gpu_err).__name__}: "
+                  f"{str(_gpu_err)[:80]}); retrying on CPU", flush=True)
+            transcript, info = _run("cpu")
     lang = getattr(info, "language", "asr") if transcript else None
     return (transcript, lang) if transcript else (None, None)
 
@@ -1193,18 +1211,36 @@ def get_transcript_cdp(video_id):
 
 
 def get_transcript_selenium(video_id):
-    """selenium-panel rung: headless Chrome reads the transcript PANEL directly
-    (panel_transcript.py). Same in-browser pipeline as cdp-panel but a
-    self-contained Selenium transport that needs no pre-launched debug Chrome -
-    so it survives the residential-IP flag without setup. Shares DOOR_CDP.
+    """selenium-panel rung: Chrome reads the transcript PANEL directly
+    (panel_transcript.py), via the SAME chrome_session.py seam cdp-panel uses
+    (D3, "ONE ORIGINAL") - Profile 1, attach-first/launch-fallback, never its
+    own profile or cookie handling. Same in-browser pipeline as cdp-panel, a
+    different transport (Selenium's debugger_address attach vs a raw CDP
+    websocket client). Shares DOOR_CDP.
 
-    OFF by default: launching Chrome is heavy and needs a local browser, so the
-    rung only runs when CINOPSIS_ENABLE_SELENIUM is truthy. That env check runs
-    BEFORE any import or launch, so a gated-off ladder never touches the network
-    (and the zero-network test harness stays honest).
+    OFF by default, and staying that way on purpose (contract Process step 6
+    asks this to be justified, not just left over): cdp-panel is ordered
+    immediately before this rung and drives the identical session/profile, so
+    in the normal case cdp-panel already succeeds and this rung never even
+    gets a gate check. Turning it on too would mean every caption-less
+    fallback drives Chrome TWICE (once per rung) for no extra chance of
+    success. It remains one env var away (CINOPSIS_ENABLE_SELENIUM=1) as a
+    genuine backup transport if cdp-panel's raw-CDP path itself ever regresses
+    - which is exactly when you want a second, differently-implemented rung
+    behind it, not concurrently with it. That env check runs BEFORE any
+    import or launch, so a gated-off ladder never touches the network (and
+    the zero-network test harness stays honest).
     Returns (transcript, lang) or (None, None); never raises."""
-    if os.environ.get("CINOPSIS_ENABLE_SELENIUM", "").strip().lower() not in (
-            "1", "true", "yes", "on"):
+    # ON BY DEFAULT (corrected 2026-09-18 by a live pull, not by reasoning).
+    # This rung was left opt-in on the argument that it is "a redundant, slower
+    # backup behind cdp-panel driving the identical session". The measurement says
+    # the opposite: on the SAME attached Profile-1 session, cdp-panel reports
+    # "transcript panel never populated" while selenium-panel returns 487 entries
+    # for the same video. Until cdp-panel's panel-click is fixed, selenium-panel is
+    # the rung that actually works, so it must not be gated off by default.
+    # Opt OUT with CINOPSIS_ENABLE_SELENIUM=0.
+    if os.environ.get("CINOPSIS_ENABLE_SELENIUM", "1").strip().lower() in (
+            "0", "false", "no", "off"):
         return None, None
     try:
         import panel_transcript as _pt
@@ -1272,11 +1308,17 @@ def fetch_transcript(video_id, allow_cache=True, refresh=False):
         ("innertube", get_transcript_innertube, DOOR_INNERTUBE),
         ("api",       get_transcript_api,       DOOR_TIMEDTEXT),
         ("yt-dlp",    get_transcript_ytdlp,     DOOR_TIMEDTEXT),
+        # PANEL RUNGS BEFORE ASR (Gavin's call, 2026-09-18). The panel rungs read
+        # YouTube's OWN caption track through a real browser, so they return the
+        # real transcript; asr GUESSES the words from audio. asr also costs an
+        # audio download plus local transcription per video. It is the LAST RESORT
+        # - for videos with no captions at all - and must never pre-empt a rung
+        # that can return the genuine text.
+        ("cdp-panel", get_transcript_cdp,       DOOR_CDP),
+        ("selenium-panel", get_transcript_selenium, DOOR_CDP),
         # asr downloads audio and transcribes locally - it is not a caption
         # "door" at all, so it gates through the door-less (shared) path.
         ("asr",       get_transcript_asr,       None),
-        ("cdp-panel", get_transcript_cdp,       DOOR_CDP),
-        ("selenium-panel", get_transcript_selenium, DOOR_CDP),
     ):
         # One gate check per rung attempt - no more. check_gate does NOT stamp
         # last_call on a refusal, so a skipped rung costs no pacing time.

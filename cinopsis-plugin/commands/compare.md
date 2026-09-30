@@ -14,7 +14,10 @@ cd ${CLAUDE_PLUGIN_ROOT} first, then follow these steps:
 2. Write `${CLAUDE_PLUGIN_DATA}/session_progress.json`:
    `{"session_dir": "SESSION_DIR", "transcripts_read": [], "status": "starting"}`
 
-3. Read ALL transcript files from `data/sessions/SESSION_DIR/_transcripts/`.
+3. Read the transcript of every video in the session: `${CLAUDE_PLUGIN_DATA}/transcript_<VIDEO_ID>.txt`
+   (written flat into the data dir by `compare_videos.py`, not into the session dir;
+   falls back to `data/transcript_<VIDEO_ID>.txt` when CLAUDE_PLUGIN_DATA is unset).
+   Take the ids from `videos[].id` in the session's comparison_data.json.
    Load every file before beginning any analysis — 1M context holds them all.
    After each read, append to `transcripts_read` in session_progress.json.
    When all loaded, set `"status": "transcripts_read"`.

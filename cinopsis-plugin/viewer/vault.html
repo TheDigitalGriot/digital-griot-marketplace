@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cinopsis Vault — every ingested video</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Same token NAMES as viewer.html on purpose: griot_widget_adapter.frame_viewer()
+   injects a second :root after this one that overrides them with the Cinopsis
+   ember palette. Always use var(--token), never a literal hex, or this page will
+   drift out of the design system. */
+:root {
+  --bg: #0f1117;
+  --panel-bg: #0d0f1a;
+  --card-bg: #1a1d2e;
+  --entry-bg: #0f1117;
+  --border-panel: #1e2235;
+  --border-card: #2d3148;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --brand-purple: #a78bfa;
+  --active-purple: #7c3aed;
+  --blue: #60a5fa;
+  --green: #34d399;
+  --yellow: #fbbf24;
+  --pink: #f472b6;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text-primary);
+}
+body { overflow-y: auto; }
+
+#vault-app { max-width: 1280px; margin: 0 auto; padding: 28px 32px 64px; }
+
+/* ---- header ---- */
+#vault-nav {
+  display: flex; align-items: center; gap: 14px;
+  padding-bottom: 18px; margin-bottom: 22px;
+  border-bottom: 1px solid var(--border-panel);
+}
+.nav-brand { font-weight: 700; font-size: 15px; color: var(--brand-purple); letter-spacing: .3px; }
+.nav-sep { color: var(--text-muted); }
+.nav-title { font-size: 15px; color: var(--text-primary); font-weight: 600; }
+.nav-spacer { flex: 1; }
+.back-link {
+  font-size: 13px; color: var(--text-secondary); text-decoration: none;
+  border: 1px solid var(--border-card); border-radius: 8px; padding: 7px 13px;
+  transition: border-color .15s, color .15s;
+}
+.back-link:hover { color: var(--text-primary); border-color: var(--brand-purple); }
+
+/* ---- stats ---- */
+.stats-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px; margin-bottom: 22px;
+}
+.stat-card {
+  background: var(--card-bg); border: 1px solid var(--border-card);
+  border-radius: 10px; padding: 14px 16px;
+}
+.stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted); }
+.stat-value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+
+/* ---- toolbar ---- */
+#vault-toolbar {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 18px;
+}
+.vault-input, .vault-select {
+  background: var(--entry-bg); color: var(--text-primary);
+  border: 1px solid var(--border-card); border-radius: 8px;
+  padding: 9px 12px; font-size: 13px; font-family: inherit;
+}
+.vault-input { flex: 1; min-width: 240px; }
+.vault-input:focus, .vault-select:focus { outline: none; border-color: var(--brand-purple); }
+.vault-count { font-size: 12px; color: var(--text-muted); margin-left: auto; white-space: nowrap; }
+
+/* ---- video rows ---- */
+.vault-list { display: flex; flex-direction: column; gap: 10px; }
+.vault-row {
+  background: var(--card-bg); border: 1px solid var(--border-card);
+  border-radius: 10px; padding: 14px 18px;
+  transition: border-color .15s;
+}
+.vault-row:hover { border-color: var(--brand-purple); }
+.vault-row-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.vault-row-title { font-size: 14px; font-weight: 600; color: var(--text-primary); flex: 1; min-width: 200px; }
+.vault-row-title a { color: inherit; text-decoration: none; }
+.vault-row-title a:hover { color: var(--brand-purple); text-decoration: underline; }
+.vault-row-take { font-size: 13px; color: var(--text-secondary); margin-top: 7px; line-height: 1.5; }
+.vault-row-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+
+.tag {
+  font-size: 10.5px; letter-spacing: .4px; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border-card);
+  color: var(--text-muted); white-space: nowrap;
+}
+.tag.session { color: var(--blue); border-color: var(--blue); }
+.tag.channel { color: var(--text-secondary); }
+.tag.digest  { color: var(--green); border-color: var(--green); }
+.tag.harvest { color: var(--yellow); border-color: var(--yellow); }
+.tag.warn    { color: var(--pink); border-color: var(--pink); }
+
+.empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="vault-app">
+  <div id="vault-nav">
+    <span class="nav-brand">CINOPSIS</span>
+    <span class="nav-sep">/</span>
+    <span class="nav-title">Vault</span>
+    <span class="nav-spacer"></span>
+    <a class="back-link" href="/">&larr; Session viewer</a>
+  </div>
+
+  <div class="stats-grid" id="vault-stats"></div>
+
+  <div id="vault-toolbar">
+    <input id="vault-search" class="vault-input" type="search"
+           placeholder="Search title, channel, takeaway, session&hellip;" autocomplete="off">
+    <select id="vault-session" class="vault-select"><option value="">All sessions</option></select>
+    <select id="vault-channel" class="vault-select"><option value="">All channels</option></select>
+    <select id="vault-filter" class="vault-select">
+      <option value="">Everything</option>
+      <option value="digest">Has digest</option>
+      <option value="harvest">Has harvest</option>
+      <option value="unresolved">Unresolved id</option>
+    </select>
+    <select id="vault-sort" class="vault-select">
+      <option value="title">Sort: title</option>
+      <option value="channel">Sort: channel</option>
+      <option value="session">Sort: session</option>
+    </select>
+    <span class="vault-count" id="vault-count"></span>
+  </div>
+
+  <div class="vault-list" id="vault-list">
+    <div class="empty-state">Loading the vault&hellip;</div>
+  </div>
+</div>
+
+<script>
+'use strict';
+(function () {
+  var allVideos = [];
+
+  function escHTML(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function el(id) { return document.getElementById(id); }
+
+  function loadVault() {
+    fetch('/api/vault')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        allVideos = Array.isArray(data) ? data : [];
+        buildFilters();
+        render();
+      })
+      .catch(function (err) {
+        el('vault-list').innerHTML =
+          '<div class="empty-state">Could not load the vault: ' + escHTML(err.message) + '</div>';
+      });
+  }
+
+  function uniqueSorted(values) {
+    var seen = {}, out = [];
+    values.forEach(function (v) {
+      if (v && !seen[v]) { seen[v] = 1; out.push(v); }
+    });
+    return out.sort(function (a, b) { return a.localeCompare(b); });
+  }
+
+  function buildFilters() {
+    var sessions = uniqueSorted(allVideos.map(function (v) { return v.session_title; }));
+    var channels = uniqueSorted(allVideos.map(function (v) { return v.channel; }));
+    el('vault-session').innerHTML = '<option value="">All sessions</option>' +
+      sessions.map(function (s) {
+        return '<option value="' + escHTML(s) + '">' + escHTML(s) + '</option>';
+      }).join('');
+    el('vault-channel').innerHTML = '<option value="">All channels</option>' +
+      channels.map(function (c) {
+        return '<option value="' + escHTML(c) + '">' + escHTML(c) + '</option>';
+      }).join('');
+  }
+
+  function statCard(label, value) {
+    return '<div class="stat-card"><div class="stat-label">' + escHTML(label) +
+           '</div><div class="stat-value">' + escHTML(value) + '</div></div>';
+  }
+
+  function renderStats(rows) {
+    var sessions = {}, channels = {}, digests = 0, unresolved = 0;
+    allVideos.forEach(function (v) {
+      if (v.session_title) { sessions[v.session_title] = 1; }
+      if (v.channel) { channels[v.channel] = 1; }
+      if (v.has_digest) { digests++; }
+      if (v.id_status === 'unresolved') { unresolved++; }
+    });
+    var html = statCard('Videos', allVideos.length) +
+               statCard('Sessions', Object.keys(sessions).length) +
+               statCard('Channels', Object.keys(channels).length) +
+               statCard('With digest', digests);
+    if (unresolved) { html += statCard('Unresolved id', unresolved); }
+    el('vault-stats').innerHTML = html;
+  }
+
+  function matches(v, q, session, channel, mode) {
+    if (session && v.session_title !== session) { return false; }
+    if (channel && v.channel !== channel) { return false; }
+    if (mode === 'digest' && !v.has_digest) { return false; }
+    if (mode === 'harvest' && !v.harvest_count) { return false; }
+    if (mode === 'unresolved' && v.id_status !== 'unresolved') { return false; }
+    if (!q) { return true; }
+    var hay = [v.title, v.channel, v.core_takeaway, v.summary, v.session_title, v.id]
+      .join(' ').toLowerCase();
+    // every whitespace-separated term must appear (AND search)
+    return q.split(/\s+/).every(function (term) { return hay.indexOf(term) !== -1; });
+  }
+
+  function rowHTML(v) {
+    var titleText = escHTML(v.title || 'Untitled');
+    var title = v.url
+      ? '<a href="' + escHTML(v.url) + '" target="_blank" rel="noopener">' + titleText + '</a>'
+      : titleText;
+
+    var tags = '';
+    if (v.session_title) { tags += '<span class="tag session">' + escHTML(v.session_title) + '</span>'; }
+    if (v.channel) { tags += '<span class="tag channel">' + escHTML(v.channel) + '</span>'; }
+    if (v.has_digest) { tags += '<span class="tag digest">digest</span>'; }
+    if (v.harvest_count) {
+      tags += '<span class="tag harvest">' + v.harvest_count + ' harvested</span>';
+    }
+    if (v.id_status === 'unresolved') {
+      tags += '<span class="tag warn" title="The real YouTube id could not be recovered ' +
+              'offline; the link is a title search.">id unresolved</span>';
+    }
+    if (v.title_status === 'derived-from-digest') {
+      tags += '<span class="tag warn" title="Label derived from the digest - the original ' +
+              'YouTube title was never captured.">derived title</span>';
+    }
+
+    var take = v.core_takeaway || v.summary || '';
+    return '<div class="vault-row">' +
+             '<div class="vault-row-head"><div class="vault-row-title">' + title + '</div></div>' +
+             (take ? '<div class="vault-row-take">' + escHTML(take) + '</div>' : '') +
+             '<div class="vault-row-meta">' + tags + '</div>' +
+           '</div>';
+  }
+
+  function render() {
+    var q = el('vault-search').value.trim().toLowerCase();
+    var session = el('vault-session').value;
+    var channel = el('vault-channel').value;
+    var mode = el('vault-filter').value;
+    var sort = el('vault-sort').value;
+
+    var rows = allVideos.filter(function (v) { return matches(v, q, session, channel, mode); });
+    var key = sort === 'channel' ? 'channel' : (sort === 'session' ? 'session_title' : 'title');
+    rows.sort(function (a, b) {
+      return String(a[key] || '').localeCompare(String(b[key] || ''));
+    });
+
+    renderStats(rows);
+    el('vault-count').textContent = rows.length + ' of ' + allVideos.length + ' videos';
+    el('vault-list').innerHTML = rows.length
+      ? rows.map(rowHTML).join('')
+      : '<div class="empty-state">No videos match those filters.</div>';
+  }
+
+  ['vault-search', 'vault-session', 'vault-channel', 'vault-filter', 'vault-sort']
+    .forEach(function (id) {
+      document.addEventListener('DOMContentLoaded', function () {
+        el(id).addEventListener('input', render);
+        el(id).addEventListener('change', render);
+      });
+    });
+
+  document.addEventListener('DOMContentLoaded', loadVault);
+})();
+</script>
+</body>
+</html>

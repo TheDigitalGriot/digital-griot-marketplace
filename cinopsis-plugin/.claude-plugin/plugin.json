@@ -1,6 +1,6 @@
 {
   "name": "cinopsis",
-  "description": "Cinopsis â€” browse subscribed YouTube channels, fetch transcripts, and generate Markdown summary digests. Multi-video comparison with an interactive dashboard, frame screenshots, and AI chat. Runs on Claude Code and Cowork.",
+  "description": "Cinopsis — browse subscribed YouTube channels, fetch transcripts, and generate Markdown summary digests. Multi-video comparison with an interactive dashboard, frame screenshots, and AI chat. Runs on Claude Code and Cowork.",
   "version": "2.8.0",
   "author": {
     "name": "Digital Griot Studio"
@@ -10,7 +10,7 @@
     "anthropic_api_key": {
       "type": "string",
       "title": "Anthropic API Key",
-      "description": "Anthropic API key â€” fallback for the in-viewer chat when the Claude CLI isn't available (e.g. on Cowork). Leave blank to use your Claude subscription via the CLI.",
+      "description": "Anthropic API key — fallback for the in-viewer chat when the Claude CLI isn't available (e.g. on Cowork). Leave blank to use your Claude subscription via the CLI.",
       "sensitive": true
     },
     "local_base_url": {

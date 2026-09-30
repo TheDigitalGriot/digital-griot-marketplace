@@ -34,6 +34,34 @@ def build_session_dir_name(title):
     return f"{date_prefix}_{slug}"
 
 
+def extract_chapters(info):
+    """Normalize yt-dlp's chapter markers to [{title, start_time, end_time}].
+
+    yt-dlp already hands these back in the --dump-json payload we are parsing,
+    so keeping them costs no extra network call. Times are floats there and ints
+    of seconds here, matching the timestamp convention the rest of the schema
+    uses. An empty list is the correct value for a video with no chapters.
+
+    These are the source of the `phase` field on analysis.workflow_steps: the
+    chapter whose span covers a step's t_start names that step's phase.
+    """
+    chapters = []
+    for ch in info.get("chapters") or []:
+        if not isinstance(ch, dict):
+            continue
+        try:
+            start = int(float(ch.get("start_time") or 0))
+            end = int(float(ch.get("end_time") or 0))
+        except (TypeError, ValueError):
+            continue
+        chapters.append({
+            "title": str(ch.get("title") or ""),
+            "start_time": start,
+            "end_time": end,
+        })
+    return chapters
+
+
 def fetch_video_metadata(video_id):
     """Fetch full metadata for a single video using yt-dlp."""
     cmd = [find_ytdlp(), "--dump-json", "--no-download", f"https://www.youtube.com/watch?v={video_id}"]
@@ -48,6 +76,7 @@ def fetch_video_metadata(video_id):
             "duration": info.get("duration_string", ""),
             "upload_date": info.get("upload_date", ""),
             "view_count": info.get("view_count", 0),
+            "chapters": extract_chapters(info),
         }
     except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError) as e:
         print(f"  Error fetching metadata for {video_id}: {e}")
@@ -59,6 +88,7 @@ def fetch_video_metadata(video_id):
             "duration": "",
             "upload_date": "",
             "view_count": 0,
+            "chapters": [],
         }
 
 
@@ -146,12 +176,14 @@ def build_comparison_data(videos, title="Video Comparison"):
             "topics": [],
             "disagreements": [],
             "key_moments": [],
+            "workflow_steps": [],
         },
         "stats": {
             "total_videos": len(videos),
             "common_topics": 0,
             "disagreements": 0,
             "key_moments": 0,
+            "workflow_steps": 0,
         },
     }
 

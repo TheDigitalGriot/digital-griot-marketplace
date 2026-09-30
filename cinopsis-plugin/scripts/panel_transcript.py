@@ -6,39 +6,63 @@ because it never touches the blocked timedtext endpoint.
 Same DOM action every video: expand description -> Show transcript ->
 read ytd-transcript-segment-renderer rows -> clean. Coded, not prompted.
 
+Session acquisition (which Chrome, which profile, attach-vs-launch, the
+profile-lock problem) is NOT owned here - it is chrome_session.py's job (D3,
+"ONE ORIGINAL", shared verbatim with grab_transcript_cdp.py). This module
+used to build its OWN driver against tempfile.mkdtemp("ytpanel_") (signed
+out, no Premium, F4), then briefly forked its own --user-data-dir /
+--profile-directory launch straight at Profile 1 (F4's other half of the
+fork, and the exact shape that crashes on the profile lock when Gavin's
+Chrome is already open). Both are retired: this rung now ATTACHES to
+whatever chrome_session.acquire_session() hands back, via Selenium's
+`debugger_address`, and never launches Chrome itself.
+
 Importable:
-  fetch_segments(video_id, headed=False, timeout=40) -> [ {t,text}, ... ]  ([] on failure; never raises)
-  fetch_many(ids, headed=False, timeout=40)          -> { id: [segments] }  (ONE reused driver)
+  fetch_segments(video_id, headed=True, timeout=40) -> [ {t,text}, ... ]  ([] on failure; never raises)
+  fetch_many(ids, headed=True, timeout=40)          -> { id: [segments] }  (ONE reused driver)
+
+`headed` is accepted for CLI/signature compatibility but is now always
+effectively True: chrome_session never launches headless (F3 - headless
+withholds the transcript panel), and an attached session is whatever window
+Gavin already has open.
 
 CLI:
-  python panel_transcript.py <id|url> [--headed] [--json OUT] [--timeout 40]
+  python panel_transcript.py <id|url> [--json OUT] [--timeout 40]
   python panel_transcript.py --ids ID1 ID2 ... [--json OUT]
 """
-import sys, os, re, json, time, tempfile, argparse
+import sys, os, re, json, time, argparse
 
-CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import chrome_session
 
 def vid_of(s):
     m = re.search(r"(?:v=|youtu\.be/|/watch\?v=)([A-Za-z0-9_-]{11})", s)
     return m.group(1) if m else (s if re.fullmatch(r"[A-Za-z0-9_-]{11}", s) else None)
 
-def build_driver(headed=False):
+def build_driver(headed=True):
+    """Attach a Selenium driver to the ONE shared Chrome session
+    (chrome_session.acquire_session) instead of launching/owning its own.
+
+    Returns (driver, owns_process) - see chrome_session's "Ownership
+    contract": callers MUST NOT driver.quit() an attached (owns_process=
+    False) session, only driver.close() the tab THIS call opened. `headed`
+    is accepted for signature compatibility; it no longer selects
+    headless/headed because chrome_session never launches headless (F3).
+    """
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.chrome.service import Service
+
+    _, owns_process, _ = chrome_session.acquire_session()
+
     o = Options()
-    o.binary_location = CHROME
-    if not headed:
-        o.add_argument("--headless=new")
-    for a in ("--window-size=1400,1000","--lang=en-US","--mute-audio","--no-first-run",
-              "--no-default-browser-check","--disable-blink-features=AutomationControlled"):
-        o.add_argument(a)
-    o.add_argument("--user-data-dir=" + tempfile.mkdtemp(prefix="ytpanel_"))
-    o.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36")
-    o.add_experimental_option("excludeSwitches", ["enable-automation"])
+    o.debugger_address = f"127.0.0.1:{chrome_session.DEBUG_PORT}"
     d = webdriver.Chrome(service=Service(), options=o)
     d.set_page_load_timeout(45)
-    return d
+    # Open a NEW tab for our own work rather than hijacking whatever tab is
+    # currently focused (real risk when attached to Gavin's live browser).
+    d.switch_to.new_window("tab")
+    return d, owns_process
 
 def dismiss_consent(d):
     try:
@@ -95,24 +119,36 @@ def fetch_on(driver, video_id, timeout=40):
         print(f"  [selenium-panel] {vid}: {type(e).__name__}: {e}", flush=True)
         return []
 
-def fetch_segments(video_id, headed=False, timeout=40):
+def _release(d, owns_process):
+    """Ownership contract (chrome_session.py): an ATTACHED session (Gavin's
+    live browser, or a prior cinopsis run's) is NEVER quit() - only the tab
+    THIS call opened is closed. A session we LAUNCHED ourselves is safe (and
+    expected) to quit() fully."""
+    try:
+        if owns_process:
+            d.quit()
+        else:
+            d.close()
+    except Exception:
+        pass
+
+def fetch_segments(video_id, headed=True, timeout=40):
     """Fetch ONE video with its own driver. [] on failure; never raises."""
     try:
-        d = build_driver(headed)
+        d, owns_process = build_driver(headed)
     except Exception as e:
         print(f"  [selenium-panel] driver unavailable: {type(e).__name__}: {e}", flush=True)
         return []
     try:
         return fetch_on(d, video_id, timeout)
     finally:
-        try: d.quit()
-        except Exception: pass
+        _release(d, owns_process)
 
-def fetch_many(ids, headed=False, timeout=40):
+def fetch_many(ids, headed=True, timeout=40):
     """Fetch several videos reusing ONE driver."""
     out = {}
     try:
-        d = build_driver(headed)
+        d, owns_process = build_driver(headed)
     except Exception as e:
         print(f"  [selenium-panel] driver unavailable: {type(e).__name__}: {e}", flush=True)
         return {vid_of(i) or i: [] for i in ids}
@@ -121,8 +157,7 @@ def fetch_many(ids, headed=False, timeout=40):
             vid = vid_of(i) or i
             out[vid] = fetch_on(d, vid, timeout)
     finally:
-        try: d.quit()
-        except Exception: pass
+        _release(d, owns_process)
     return out
 
 def _joined(segs):
@@ -132,7 +167,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("video", nargs="?")
     ap.add_argument("--ids", nargs="+")
-    ap.add_argument("--headed", action="store_true")
+    ap.add_argument("--headed", action="store_true",
+                     help="accepted for compatibility; a no-op - chrome_session "
+                          "never launches headless (F3)")
     ap.add_argument("--json", default=None)
     ap.add_argument("--timeout", type=int, default=40)
     a = ap.parse_args()
