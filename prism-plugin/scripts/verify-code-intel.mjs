@@ -56,6 +56,12 @@ const slugOf = (abs) => abs.replace(/^([A-Za-z]):/, '$1').replace(/[\\/:]+/g, '-
 
 const CACHE = join(homedir(), '.cache', 'codebase-memory-mcp')
 
+/** I16: tool names known to have gone stale in docs/agents after a rename or
+ * removal. Extend this list the moment a new instance of the class is found —
+ * it exists so I16 flags a KNOWN drift precisely rather than pattern-matching
+ * every backticked `word(...)` in a doc, which would false-positive constantly. */
+const KNOWN_STALE_TOOL_NAMES = new Set(['trace_call_path'])
+
 // ── I11 · the code graph is indexed at THIS repo, not a previous address ────
 // The failure this catches is silent by construction: a graph indexed at an old
 // path answers every query with nothing, and the agent falls back to grep
@@ -221,6 +227,34 @@ const CACHE = join(homedir(), '.cache', 'codebase-memory-mcp')
 // still answers, just worse, and nobody is told. gitnexus.json records status and
 // a reason per capability, so this is a read, not a guess. Separate from I12 —
 // "stale" and "degraded" are different failures and must not mask each other.
+// RESTRUCTURED 2026-09-30 — story s-4bee6675 ("Split I15 capability verdicts so
+// one degraded capability cannot mask another") + Door 3 of the code-intel
+// three-way exploration. Two distinct defects lived in the old single-verdict
+// body, found the same session:
+//
+//   (a) COMBINED VERDICT. One `bad` array held every degraded capability, and
+//       the code-review-graph fallback only fired when
+//       `bad.every(b => b.startsWith('vectorSearch'))` — true only while
+//       vectorSearch was the SOLE failure. The moment a second capability
+//       (fts, graph) also went down, the guard went false and the fallback
+//       was never even considered — one bad capability silently swallowed the
+//       verdict on an unrelated one. Fixed by giving each capability key its
+//       own `rec()` row (id `I15.<capability>`), so a fts failure and a
+//       vectorSearch pass-via-fallback report independently, exactly as the
+//       comment above always claimed I12 vs I15 must.
+//
+//   (b) PROXY VERDICT. The vectorSearch fallback treated
+//       `.code-review-graph/graph.db` merely EXISTING as proof semantic search
+//       works. graph.db proves the graph was BUILT, not that its embeddings
+//       are QUERYABLE. Measured 2026-09-30: 25,534 nodes embedded in that
+//       store, and a live semantic_search_nodes_tool call still returned
+//       search_mode:"fts" — because the MCP server that actually answers
+//       queries (.mcp.json's `code-review-graph` entry) was launched via
+//       plain `uvx code-review-graph serve`, no `[embeddings]` extra, so
+//       sentence-transformers was never importable in THAT process regardless
+//       of what sat on disk. The real property is what .mcp.json launches,
+//       not what the store contains — the AUTHORED registry that decides it
+//       (THE PROXY VERDICT law: a file query measures storage, not capability).
 {
   const gx = read(join(ROOT, '.gitnexus', 'gitnexus.json'))
   if (!gx) {
@@ -228,37 +262,116 @@ const CACHE = join(homedir(), '.cache', 'codebase-memory-mcp')
   } else {
     try {
       const caps = JSON.parse(gx)?.capabilities ?? {}
-      const bad = Object.entries(caps)
-        .filter(([, c]) => c?.status && c.status !== 'available')
-        .map(([k, c]) => `${k}=${c.status}${c.reason ? ` (${String(c.reason).slice(0, 70)})` : ''}`)
-
-      // A capability is only MISSING if no provider supplies it. gitnexus's own
-      // vectorSearch is disabled on this platform (LadybugDB VECTOR), but
-      // code-review-graph carries a local embedding index over the same repo, so
-      // concept-level search IS available — just not from that provider.
-      // Checking one provider and declaring the capability dead is how a check
-      // goes permanently red and stops being read.
-      const crgDb = join(ROOT, '.code-review-graph')
-      let semanticElsewhere = null
-      if (existsSync(crgDb)) {
-        try {
-          const hit = readdirSync(crgDb).find((f) => /embed/i.test(f)) ||
-            (existsSync(join(crgDb, 'graph.db')) ? 'graph.db' : null)
-          if (hit) semanticElsewhere = `code-review-graph (${hit})`
-        } catch { /* fall through */ }
+      const capKeys = Object.keys(caps)
+      if (!capKeys.length) {
+        rec('I15', 'declared capabilities are available', 'unverified', 'gitnexus.json has no capabilities block')
       }
 
-      const onlySemanticDown = bad.length > 0 && bad.every((b) => b.startsWith('vectorSearch'))
-      if (bad.length && onlySemanticDown && semanticElsewhere) {
-        rec('I15', 'declared capabilities are available', 'pass',
-            `${bad.join(' · ')} — BUT semantic search is covered by ${semanticElsewhere}, so concept-level queries work`)
-      } else {
-        rec('I15', 'declared capabilities are available', bad.length ? 'fail' : 'pass',
-            bad.length
-              ? `${bad.join(' · ')} — and no other provider supplies it`
-              : `${Object.keys(caps).length} capabilities available`)
+      // The code-review-graph witness is computed once, shared by whichever
+      // capability's fallback needs it (today only vectorSearch, but this is
+      // no longer hardwired to a combined guard — any capability can check it).
+      const crgDb = join(ROOT, '.code-review-graph')
+      const dbBuilt = existsSync(crgDb) && existsSync(join(crgDb, 'graph.db'))
+      let crgWitness = null // null = no usable fallback; else a detail string
+      let crgDegraded = null // non-null = built but NOT queryable — report it, don't hide it
+      if (dbBuilt) {
+        const mcpConfig = read(join(ROOT, '.mcp.json'))
+        try {
+          const servers = JSON.parse(mcpConfig ?? '{}')?.mcpServers ?? {}
+          const args = Array.isArray(servers['code-review-graph']?.args) ? servers['code-review-graph'].args : []
+          const wired = args.some((a) => /code-review-graph\[embeddings\]/i.test(String(a)))
+          if (wired) crgWitness = 'code-review-graph (graph.db built + .mcp.json launches it with the [embeddings] extra)'
+          else if (mcpConfig) {
+            crgDegraded = 'code-review-graph: graph.db built (25k+ embeddings) but .mcp.json launches `uvx code-review-graph serve` ' +
+              'with no `[embeddings]` extra — sentence-transformers unimportable in that process, so semantic_search_nodes_tool ' +
+              'silently falls back to search_mode:"fts". Fix: add "--from","code-review-graph[embeddings]" before ' +
+              '"code-review-graph","serve" in .mcp.json\'s args, then restart the MCP connection.'
+          } else {
+            crgDegraded = 'code-review-graph: graph.db built but no .mcp.json in this repo to launch it with embeddings'
+          }
+        } catch { crgDegraded = 'code-review-graph: graph.db built but .mcp.json is unparseable — cannot verify the [embeddings] extra is wired' }
+      }
+
+      for (const [key, c] of Object.entries(caps)) {
+        const id = `I15.${key}`
+        const name = `capability: ${key}`
+        if (!c?.status || c.status === 'available') {
+          rec(id, name, 'pass', `provider=${c?.provider ?? 'unknown'}`)
+          continue
+        }
+        const base = `${key}=${c.status}${c.reason ? ` (${c.reason})` : ' (gitnexus.json supplies no reason)'}`
+        // Only the capability the fallback actually covers gets to use it.
+        // Today that is vectorSearch; a future capability with its own witness
+        // gets its own branch here rather than being folded into this one.
+        if (key === 'vectorSearch' && crgWitness) {
+          rec(id, name, 'pass', `${base} — BUT covered by ${crgWitness}, so concept-level queries work`)
+        } else if (key === 'vectorSearch' && crgDegraded) {
+          // Exactly the silently-degraded case I15 exists to catch — not a pass.
+          rec(id, name, 'fail', `${base} — ${crgDegraded}`)
+        } else {
+          rec(id, name, 'fail', `${base} — no other provider supplies it`)
+        }
       }
     } catch { rec('I15', 'declared capabilities are available', 'unverified', 'gitnexus.json unparseable') }
+  }
+}
+
+// ── I16 · documented tool names/counts match what the binary actually reports ──
+// story s-10c2e47d. Observed 2026-09-22: docs and an agent claimed
+// codebase-memory-mcp exposes "11 tools" and called its trace tool
+// `trace_call_path`, while the live server reports 14 tools and the trace tool
+// is `trace_path`. Both are the same defect: a number or a name that was true
+// once, typed into prose, and never re-checked. The binary itself is the
+// authored source of truth here — `codebase-memory-mcp --help` prints its own
+// live tool list on every invocation — so this check reads THAT instead of
+// trusting any doc, then flags any doc/agent file whose own claimed count or
+// tool name has drifted from it. A doc that stops naming a hardcoded number
+// (the fix applied 2026-09-30) passes by construction — it has nothing left to
+// drift from.
+{
+  let liveTools = null
+  try {
+    const help = execFileSync('codebase-memory-mcp', ['--help'], { encoding: 'utf-8', timeout: 10_000 })
+    const m = help.match(/Tools:\s*([\s\S]+?)(?:\n\n|$)/)
+    if (m) liveTools = m[1].split(',').map((s) => s.trim().replace(/\s+/g, ' ')).filter(Boolean)
+  } catch { /* binary not on PATH here — handled below as unverified */ }
+
+  if (!liveTools || !liveTools.length) {
+    rec('I16', 'codebase-memory-mcp docs match the live binary', 'unverified',
+        'codebase-memory-mcp --help did not run or its output did not parse — cannot compare')
+  } else {
+    const liveCount = liveTools.length
+    const liveNames = new Set(liveTools)
+    const problems = []
+
+    // Any file that states a hardcoded "N tools" claim must state the CURRENT
+    // live count, wherever it appears (docs or agent frontmatter/body).
+    const countClaimFiles = [
+      join(ROOT, '.prism', 'shared', 'docs', 'code-intel', 'prism-code-intelligence-integration.md'),
+      join(ROOT, 'agents', 'graph-navigator.md'),
+      join(ROOT, 'apps', 'prism-setup', 'resources', 'plugin', 'agents', 'graph-navigator.md'),
+    ]
+    for (const f of countClaimFiles) {
+      const body = read(f)
+      if (!body) continue
+      const rel = f.slice(ROOT.length + 1)
+      for (const claimed of body.matchAll(/\b(\d+)\s+(?:MCP\s+)?tools\b/gi)) {
+        const n = Number(claimed[1])
+        if (n !== liveCount) problems.push(`${rel}: claims "${n} tools" but the binary reports ${liveCount}`)
+      }
+      // A tool name that isn't in the live list is either renamed or removed —
+      // trace_call_path (renamed to trace_path 2026-09-XX) is the known instance.
+      for (const name of body.matchAll(/`(\w+)\(/g)) {
+        const fn = name[1]
+        const looksLikeATool = /^[a-z][a-z_]{3,}$/.test(fn) && !['function', 'console'].includes(fn)
+        if (looksLikeATool && !liveNames.has(fn) && KNOWN_STALE_TOOL_NAMES.has(fn)) {
+          problems.push(`${rel}: calls \`${fn}(...)\` — not a live codebase-memory-mcp tool name (binary reports: ${[...liveNames].join(', ')})`)
+        }
+      }
+    }
+
+    rec('I16', 'codebase-memory-mcp docs match the live binary', problems.length ? 'fail' : 'pass',
+        problems.length ? problems.join(' · ') : `${liveCount} live tools, no stale count/name claims found`)
   }
 }
 
