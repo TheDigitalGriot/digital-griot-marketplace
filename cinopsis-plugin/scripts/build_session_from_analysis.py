@@ -19,9 +19,11 @@ Input JSON (via --input FILE, or stdin):
     "unified_summary": "...",
     "topics": [ {"name","video_coverage","consensus","entries":[{"video_id","timestamp","quote"}]} ],
     "disagreements": [ {"topic","positions":[{"video_id","position"}]} ],
-    "key_moments": [ {"video_id","timestamp","label","description"} ]
+    "key_moments": [ {"video_id","timestamp","label","description"} ],
+    "workflow_steps": [ {"video_id","t_start","action",...} ]   # optional; tutorials
   },
-  "stats": { ... }                               # optional; auto-computed from array lengths
+  "stats": { ... }                               # optional; the count keys are ALWAYS
+                                                 # recomputed from the array lengths
 }
 
 Usage:
@@ -63,13 +65,11 @@ def build(data, fetch_thumbs=False):
     analysis.setdefault("topics", [])
     analysis.setdefault("disagreements", [])
     analysis.setdefault("key_moments", [])
+    analysis.setdefault("workflow_steps", [])
 
-    stats = data.get("stats") or {
-        "total_videos": len(videos),
-        "common_topics": len(analysis["topics"]),
-        "disagreements": len(analysis["disagreements"]),
-        "key_moments": len(analysis["key_moments"]),
-    }
+    stats = cv.derive_stats(videos, analysis, data.get("stats"))
+    for m in cv.fill_phases(videos, analysis):
+        print(f"  [phase] model phase kept, differs from chapter: {m}", flush=True)
 
     title = data.get("title")
     if not title:

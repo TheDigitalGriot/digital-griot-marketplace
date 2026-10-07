@@ -15,9 +15,15 @@ DEFAULTS = {
     "local_base_url": "http://localhost:11434/v1",
     "local_model": "",
     "local_api_key": "",
+    # v3 transcript source seam (per instance; see scripts/sources). Empty = the
+    # CINOPSIS_TRANSCRIPT_SOURCES env var, then the default order.
+    "transcript_sources": "",                  # e.g. "gemini-url,local-pipeline,og-http"
+    "gemini_api_key": "",                      # gemini-url source; GEMINI_API_KEY env also works
+    "gemini_model": "",                        # empty = Watch default (media.config.DEFAULT_GEMINI_MODEL)
+    "sub_lang": "auto",                        # local-pipeline caption language (Watch select_caption)
 }
 
-SECRET_KEYS = {"anthropic_api_key", "local_api_key"}
+SECRET_KEYS = {"anthropic_api_key", "local_api_key", "gemini_api_key"}
 
 
 def _settings_path() -> Path:
@@ -57,6 +63,10 @@ def load_settings() -> dict:
     data["local_base_url"] = pick("local_base_url", "CLAUDE_PLUGIN_OPTION_LOCAL_BASE_URL", DEFAULTS["local_base_url"])
     data["local_model"] = pick("local_model", "CLAUDE_PLUGIN_OPTION_LOCAL_MODEL", "")
     data["local_api_key"] = file_data.get("local_api_key") or env.get("CLAUDE_PLUGIN_OPTION_LOCAL_API_KEY") or ""
+    data["transcript_sources"] = file_data.get("transcript_sources") or ""
+    data["gemini_api_key"] = file_data.get("gemini_api_key") or env.get("GEMINI_API_KEY") or ""
+    data["gemini_model"] = pick("gemini_model", "CINOPSIS_GEMINI_MODEL", "")
+    data["sub_lang"] = file_data.get("sub_lang") or DEFAULTS["sub_lang"]
     return data
 
 

@@ -277,6 +277,67 @@ def capture_session_file(session, output_dir=None, verbose=True):
     return summary
 
 
+# ---------------------------------------------------------------------------
+# v3: whole-video frame selection with Watch's frame engine (scripts/media/frames.py,
+# lifted from claude-video). capture_frame() above grabs ONE frame at a known
+# timestamp from a stream URL; capture_keyframes() downloads the video once (720p
+# cap, media.download.download_url) and lets the engine choose the frames:
+#   keyframes - I-frames only, near-instant (extract_keyframes)
+#   scene     - scene cuts, uniform fallback for static video (extract_scene_or_uniform)
+# Frames land in DATA_DIR/frames/<id>_<mode>/; the downloaded video is deleted.
+# ---------------------------------------------------------------------------
+FRAME_MODES = ("keyframes", "scene")
+
+
+def capture_keyframes(video_id, mode="keyframes", max_frames=50, resolution=512, output_dir=None,
+                      dedup=True):
+    """Select frames across a whole video. Returns {frames:[{timestamp_seconds, path, frame_ref}], meta}."""
+    import shutil
+    from media import download, frames
+    if mode not in FRAME_MODES:
+        raise ValueError(f"mode must be one of {FRAME_MODES}")
+    try:
+        import ratelimit
+        ratelimit.check_gate("frames")
+    except ImportError:
+        ratelimit = None
+    base = Path(output_dir) if output_dir else DATA_DIR / FRAMES_SUBDIR
+    out = base / f"{video_id}_{mode}"
+    out.mkdir(parents=True, exist_ok=True)
+    runs = DATA_DIR / "media_runs"
+    media = None
+    try:
+        try:
+            media = download.download_url(f"https://www.youtube.com/watch?v={video_id}", runs)
+        except SystemExit as exc:
+            if ratelimit is not None:
+                ratelimit.record_outcome(False, str(exc))
+            raise RuntimeError(str(exc)) from None
+        if ratelimit is not None:
+            ratelimit.record_outcome(True)
+        try:  # the lifted engine reports ffmpeg/ffprobe failure as SystemExit (it is a CLI)
+            if mode == "keyframes":
+                selected, meta = frames.extract_keyframes(media["video_path"], out, resolution=resolution,
+                                                          max_frames=max_frames, dedup=dedup)
+            else:
+                duration = frames.get_metadata(media["video_path"])["duration_seconds"]
+                fps, target = frames.auto_fps(duration, max_frames=max_frames or 100)
+                selected, meta = frames.extract_scene_or_uniform(media["video_path"], out, fps, target,
+                                                                 resolution=resolution, max_frames=max_frames,
+                                                                 dedup=dedup)
+        except SystemExit as exc:
+            raise RuntimeError(str(exc)) from None
+    finally:
+        if media and media.get("run_dir"):
+            shutil.rmtree(media["run_dir"], ignore_errors=True)
+    for f in selected:
+        try:
+            f["frame_ref"] = Path(f["path"]).resolve().relative_to(DATA_DIR.resolve()).as_posix()
+        except ValueError:
+            f["frame_ref"] = None
+    return {"video_id": video_id, "mode": mode, "frames": selected, "meta": meta, "dir": str(out)}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Capture video frames at specific timestamps")
     parser.add_argument("--video-id", help="YouTube video ID or URL")
@@ -286,7 +347,24 @@ def main():
                                          "frame_ref back into the session")
     parser.add_argument("--output-dir", help="Directory to save frames")
     parser.add_argument("--json", action="store_true", help="Output results as JSON")
+    parser.add_argument("--select", choices=FRAME_MODES, default=None,
+                        help="Let Watch's frame engine pick frames across the whole video "
+                             "(keyframes = I-frames, scene = scene cuts) instead of --timestamps")
+    parser.add_argument("--max-frames", type=int, default=50, help="Cap for --select (default 50)")
     args = parser.parse_args()
+
+    if args.select:
+        if not args.video_id:
+            parser.error("--select needs --video-id")
+        result = capture_keyframes(extract_video_id(args.video_id), args.select, args.max_frames,
+                                   output_dir=args.output_dir)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"  {len(result['frames'])} frames ({result['meta'].get('engine')}) -> {result['dir']}")
+            for f in result["frames"]:
+                print(f"  [{format_timestamp(int(f['timestamp_seconds']))}] {f['path']}")
+        return
 
     if args.session:
         summary = capture_session_file(args.session, args.output_dir, verbose=not args.json)

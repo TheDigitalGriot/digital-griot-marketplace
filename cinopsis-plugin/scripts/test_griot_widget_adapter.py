@@ -71,13 +71,16 @@ real = Path(__file__).parent.parent / "viewer" / "viewer.html"
 if real.exists():
     src = real.read_text(encoding="utf-8")
     framed = frame_viewer(src)
-    assert GRIOT_MARKER in framed and CINOPSIS_EMBER in framed
-    assert '<div id="app">' in framed                      # real graph mount preserved
-    assert framed.count("</body>") == src.count("</body>")  # no stray body tags
-    assert "--brand-purple: #a78bfa" in framed              # viewer's own :root kept…
-    assert framed.index("--brand-purple: #a78bfa") < framed.index(GRIOT_MARKER)  # …override wins
+    # The real viewer carries the Griot Widget Contract NATIVELY (its own <head> comment:
+    # mark in the rail, one Send-to-channel drive() CTA, the channel meta tags) and holds the
+    # marker, so frame_viewer must NO-OP on it - injecting a second logo chip, CTA and the
+    # superseded :root palette over that design system is exactly what the marker prevents.
+    assert GRIOT_MARKER in src
+    assert framed == src                                    # no double-inject on the native contract
+    assert '<meta name="brainstorm-channel-port" content="52342">' in src
+    assert '<meta name="brainstorm-session-id" content="cinopsis">' in src
     assert frame_viewer(framed) == framed                   # idempotent on the real file
-    ok("real viewer.html frames cleanly — graph mount intact, override wins, idempotent")
+    ok("real viewer.html carries the contract natively - frame_viewer no-ops, idempotent")
 else:
     print("  -- real viewer.html not found at", real, "(skipped real-file check)")
 

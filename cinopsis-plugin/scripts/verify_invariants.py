@@ -245,7 +245,8 @@ def check_ingest_iff(sessions, artifacts):
 
 
 def check_digest_real(sessions, artifacts):
-    """INV2 -- no digest entry (or key_moment) without a backing transcript."""
+    """INV2 -- no digest entry (or key_moment) without a backing transcript;
+    every workflow_step cites a video in the session manifest."""
     violations, checked = [], 0
     for session in sessions:
         by_id = {v.get("id"): v for v in session.videos
@@ -275,6 +276,20 @@ def check_digest_real(sessions, artifacts):
                 violations.append(
                     f"{_p(session.label)}: key_moment cites {_p(vid)}, "
                     f"which has no backing transcript")
+        # workflow_steps (harvest B11): membership only. A step can record what
+        # is SHOWN on screen and never spoken, so it need not appear in the
+        # transcript - but it must cite a video this session actually holds.
+        for step in session.analysis.get("workflow_steps", []) or []:
+            if not isinstance(step, dict):
+                continue
+            vid = step.get("video_id")
+            if not vid:
+                continue
+            checked += 1
+            if vid not in by_id:
+                violations.append(
+                    f"{_p(session.label)}: workflow_step cites {_p(vid)}, "
+                    f"which is not in the session manifest")
     return violations, f"{checked} digest entries across {len(sessions)} sessions"
 
 

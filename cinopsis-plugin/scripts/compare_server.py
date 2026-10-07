@@ -74,7 +74,12 @@ def create_app(data_dir=None):
             return jsonify({"error": "video_id and timestamp required"}), 400
 
         video_id = extract_video_id(body["video_id"])
-        timestamp = int(body["timestamp"])
+        try:
+            timestamp = int(float(body["timestamp"]))
+        except (TypeError, ValueError):
+            return jsonify({"error": "timestamp must be a number of seconds"}), 400
+        if timestamp < 0:
+            return jsonify({"error": "timestamp must be >= 0"}), 400
 
         frames_dir = data_dir / "frames"
         b64 = capture_frame(video_id, timestamp, frames_dir)
@@ -82,6 +87,25 @@ def create_app(data_dir=None):
         if b64:
             return jsonify({"video_id": video_id, "timestamp": timestamp, "screenshot_base64": b64})
         return jsonify({"error": "Failed to capture frame"}), 500
+
+    @app.route("/frames/<path:name>")
+    def frames(name):
+        """Serve a harvested frame by its frame_ref name (harvest B2, server half).
+
+        Frames have two homes (harvest B1): the canonical dir this server owns and
+        the working DATA_DIR that capture_session_frames writes. Both are searched,
+        canonical first; anything that escapes a frames dir is refused.
+        """
+        from _utils import DATA_DIR
+        rel = name[len("frames/"):] if name.startswith("frames/") else name
+        for root in (data_dir / "frames", Path(DATA_DIR) / "frames"):
+            root = root.resolve()
+            target = (root / rel).resolve()
+            if not target.is_relative_to(root):
+                abort(400)
+            if target.is_file():
+                return send_file(target)
+        abort(404)
 
     def _session_data(session_id):
         """Load comparison_data.json for a session id, or None."""
@@ -382,7 +406,8 @@ def _resolve_port(host, port, session_id, span=20):
 def _has_analysis(data):
     """True if a comparison_data dict contains Claude-authored analysis (not empty placeholders)."""
     a = (data or {}).get("analysis") or {}
-    if a.get("unified_summary") or a.get("topics") or a.get("key_moments") or a.get("disagreements"):
+    if (a.get("unified_summary") or a.get("topics") or a.get("key_moments")
+            or a.get("disagreements") or a.get("workflow_steps")):
         return True
     return any((v.get("digest") or v.get("summary")) for v in (data or {}).get("videos", []))
 

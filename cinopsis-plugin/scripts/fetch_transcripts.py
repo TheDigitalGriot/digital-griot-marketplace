@@ -18,7 +18,9 @@ import time
 from pathlib import Path
 
 from _utils import DATA_DIR
-from get_transcript import fetch_transcript, save_transcript
+from chrome_session import ChromeProfileLockedError
+from get_transcript import fetch_transcript, save_transcript, describe_failure
+from sources import add_source_args
 
 
 def is_cached(video_id):
@@ -31,6 +33,7 @@ def main():
     ap.add_argument("--chunk", type=int, default=5,
                     help="Max IDs to fetch this call (default 5; HARD-CAPPED at 5 — anti-hammer)")
     ap.add_argument("--refresh", action="store_true", help="Re-fetch even if cached")
+    add_source_args(ap)
     args = ap.parse_args()
 
     # HARD ANTI-HAMMER CAP: never fetch more than 5 IDs per invocation, no matter
@@ -52,18 +55,29 @@ def main():
           f"{len(todo)} to fetch | this call: {len(batch)}", flush=True)
 
     results = {}
+    f1_error = False
     for idx, vid in enumerate(batch):
         if idx > 0:
             time.sleep(THROTTLE_SEC)  # space fetches so a batch is a drip, not a burst
         print(f"\n== {vid} ==", flush=True)
-        t, lang, method = fetch_transcript(vid, allow_cache=not args.refresh, refresh=args.refresh)
+        try:
+            t, lang, method = fetch_transcript(
+                vid, allow_cache=not args.refresh, refresh=args.refresh,
+                allow_http_rungs=True if args.allow_http_rungs else None,
+                sources=args.sources)
+        except ChromeProfileLockedError as e:
+            # F1 with browser-panel as the last selected source: the whole batch would
+            # fail identically, so STOP loudly. Progress is still written.
+            print(f"\nF1 - {e}", flush=True)
+            f1_error = True
+            break
         if t:
             save_transcript(vid, t)
             results[vid] = {"ok": True, "entries": len(t), "method": method}
             print(f"  cached {vid}: {len(t)} entries via {method}", flush=True)
         else:
-            results[vid] = {"ok": False}
-            print(f"  FAILED {vid}", flush=True)
+            results[vid] = {"ok": False, "reason": method}
+            print(f"  FAILED {vid}: {describe_failure(method, vid)}", flush=True)
 
     remaining = [v for v in todo if v not in batch]
     cached_now = [v for v in args.ids if is_cached(v)]
@@ -76,6 +90,10 @@ def main():
     progress_file.write_text(json.dumps(progress, indent=2), encoding="utf-8")
 
     print(f"\nDONE this call. cached={len(cached_now)}/{len(args.ids)} remaining={len(remaining)}", flush=True)
+    if f1_error:
+        print("Aborted by F1 (no Chrome debug port). Run scripts/launch_chrome_debug.ps1 once, "
+              "then resume.", flush=True)
+        raise SystemExit(3)
     if remaining:
         print(f"Resume: python fetch_transcripts.py --ids {' '.join(remaining)}", flush=True)
     else:

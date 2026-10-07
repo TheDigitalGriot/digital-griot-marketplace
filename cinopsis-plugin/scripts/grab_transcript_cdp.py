@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 """
+*** SECONDARY / LEGACY (stage contract transcript-browser-default, 2026-10-01) ***
+Superseded by panel_transcript.py, the single shared browser recipe. This raw-CDP
+rung is RETAINED but is no longer on the default ladder: it is reachable only
+under the explicit HTTP-rung opt-in (--allow-http-rungs / CINOPSIS_ALLOW_HTTP_RUNGS=1).
+Its in-page extraction is the OLD per-row selector the current panel never emits
+(it returns 0 rows), and it lacks the Transcript-tab click and patient spinner wait.
+It ATTACHES only - chrome_session.acquire_session() never launches a browser.
+
 grab_transcript_cdp.py - guaranteed-fallback transcript rung for Cinopsis.
 
 When every pure-HTTP transcript door (youtube-transcript-api, yt-dlp, the

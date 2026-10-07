@@ -58,10 +58,15 @@ On Cowork there is no Bash tool, so the same operations run through a local-stdi
 
 - `fetch_videos(days, keyword, include_all)` — list recent channel videos
 - `fetch_playlist(url, name, playlist_end, include_all, seed_only, cookies)` — surface newly-added playlist videos (returns the new-id array; `cookies` reaches private/unlisted playlists)
-- `get_transcript(video_id)` — fetch a transcript
-- `compare_videos(urls, title)` — build a comparison session (then fill analysis + per-video digest)
+- `get_transcript(video_id, sources)` — fetch a transcript through the selected sources (see "Transcript sources")
+- `compare_videos(urls, title, sources)` — build a comparison session (then fill analysis + per-video digest)
 - `launch_viewer(session_id, port)` — start the dashboard, returns a localhost URL to open
 - `capture_frame(video_id, timestamp_seconds)` — grab a frame
+- `harvest_frames(session)` — write a frame_ref onto every workflow step of a session
+- `doctor(json_output, live)` — which transcript sources are ready on this instance, and what each one needs
+- `get_description(video_id)` — write `description_<id>.txt` + `links_<id>.json` (github / gitlab / huggingface)
+- `watch_video(source, question, engine, detail, start, end)` — the Watch verb: frames + transcript, or Gemini's answer
+- `watch_frames(video_id, mode, max_frames)` — keyframe / scene frame selection across a whole video
 
 Sessions auto-persist to the canonical data dir (`~/.claude/plugins/data/cinopsis-cinopsis`), so a comparison built on Cowork shows up in Claude Code and vice-versa. The session is registered at build time, and **the analysis you fill in is re-promoted to canonical when the viewer launches** (`compare_server.py` copies the working copy over before serving) — this is why you write analysis into the working `comparison_data.json`, then launch. Recover/relocate any session with `python scripts/persist_session.py <dir_name>` (or `--all`). The viewer prints `Serving viewer at <url>` — use that printed URL (the port auto-bumps if 5123 is busy).
 
@@ -125,25 +130,60 @@ unauthenticated, so the script returns 0 entries and prints a hint. Two ways in:
    logged-in Chrome to the playlist and read the entries off the page — proven pulling a
    private 1,703-video playlist end-to-end.
 
-## Transcript fetch - the reliable ladder (cloud <-> local) [PINNED]
+## Transcript sources (v3.0.0) [PINNED]
 
-Fetching a transcript is environment-sensitive. `get_transcript.py` / `fetch_transcript()`
-run this ladder automatically; when you drive it by hand, follow the same order. **Do not
-re-derive this every session - it is baked into the tool and pinned here.**
+Every surface (`get_transcript.py`, `fetch_transcripts.py`, `compare_videos.py`, `digest_all.py`,
+the playlist + companion pull, the MCP tools) goes through ONE ladder: the cache first, then the
+**transcript sources** this Cinopsis instance selected, in order. Each source is an Agent-Reach
+channel (`scripts/sources/`, built on the lifted `scripts/reach/` model): it knows its rungs, its
+rate-limit door, and how to check itself.
 
-0. **Probe with ONE video first**, and never assume egress - this sandbox may or may not have
-   YouTube network access (it is inconsistent per session).
-1. **cache** - reuse `data/transcript_<id>.json` if present (idempotent).
-2. **api** (preferred) - `youtube-transcript-api`, instance `YouTubeTranscriptApi().fetch(id)`
-   (shim: legacy static `.get_transcript(id)`). Fast, no yt-dlp; needs egress.
-3. **yt-dlp** - subtitle download with cookie fallbacks. Works where the API is proxy-blocked.
-   Run it with the **venv** python (`mcp_launcher.py` installs `yt-dlp` from requirements) -
-   a bare system python will `FileNotFound` on yt-dlp.
-4. **asr** (optional) - `yt-dlp` audio -> `faster-whisper`, for caption-LESS videos. Fires
-   only if `faster-whisper` is installed; enable with `pip install faster-whisper`.
-5. **Chrome caption-scrape** (agent-side) - if all else fails and you have a browser, read
-   `ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks` off the
-   loaded watch page.
+| source | what it does | kind | door |
+|---|---|---|---|
+| `browser-panel` | YouTube's own transcript panel in the already-running GB Chrome (attach-only, `panel_transcript.py`) | caption | cdp |
+| `og-http` | the original HTTP ladder: innertube, youtube-transcript-api, yt-dlp, raw-CDP panel, ASR | caption | per rung |
+| `gemini-url` | Gemini watches the URL (Google fetches it - no browser, not from this IP) | model | gemini |
+| `local-pipeline` | one yt-dlp info-json call + one caption track (Watch engine); ASR when there is none; writes the description + links | caption | timedtext |
+| `claude` | the Claude lane (testing) - restructures description material already on disk | model | claude |
+
+**Choosing the order** (first hit wins): `--sources a,b` on any entry point or the MCP `sources`
+param -> `--allow-http-rungs` (= `browser-panel,og-http`) -> env `CINOPSIS_TRANSCRIPT_SOURCES` ->
+env `CINOPSIS_ALLOW_HTTP_RUNGS=1` -> settings `transcript_sources` -> default `browser-panel`.
+Gavin's desk keeps the default. A portable / Hazine install with no browser:
+`CINOPSIS_TRANSCRIPT_SOURCES=gemini-url,local-pipeline,og-http`.
+
+**Run the doctor first** when a transcript misses: `python scripts/doctor.py` (MCP `doctor`)
+reports every source's real state - yt-dlp executed, the Chrome debug port probed on loopback,
+keys present or absent (never printed) - plus the live order and where it came from. `--live` adds
+at most one lightweight request per network source, each behind its door.
+
+**Named outcomes:** **F1** `ChromeProfileLockedError` - no Chrome debug port and `browser-panel` is
+the last selected source (run `scripts/launch_chrome_debug.ps1` once, or select another source);
+with later sources selected F1 is held and they run, and an all-miss reports `no-browser`.
+**F2** no transcript available. **F3** panel still loading. A model-derived transcript carries
+`kind: model` in `transcript_<id>.source.json`, so it never passes for a caption track.
+
+The browser-panel recipe lives in `panel_transcript.py`: expand description -> open "Show
+transcript" -> **click the "Transcript" tab** (the panel opens on Chapters) -> wait for rows
+(14 x 2.2s; an active spinner means *still loading*) -> generic shadow-piercing timestamp
+extraction -> scroll to stability -> `[{"start": int, "text": str}]`. Never open or launch a
+browser on Gavin's desktop to make this work.
+
+**Descriptions** are the authoritative source for titles and repo slugs: `python
+scripts/get_description.py --video-id ID` (MCP `get_description`) writes
+`description_<id>.txt` + `links_<id>.json`; the `local-pipeline` source writes them as a side effect.
+
+**The Watch verb**: `python scripts/watch_video.py <url> [--engine gemini|local] [--detail ...]`
+(MCP `watch_video`) runs claude-video's full flow inside Cinopsis; `capture_frames.py --select
+keyframes|scene --video-id ID` (MCP `watch_frames`) uses its frame engine.
+
+### og-http rung notes (reference)
+
+0. **Probe with ONE video first**, and never assume egress.
+1. **api** - `youtube-transcript-api`, instance `YouTubeTranscriptApi().fetch(id)`. Fast; needs egress.
+2. **yt-dlp** - subtitle download with cookie fallbacks. Run it with the **venv** python
+   (`mcp_launcher.py` installs `yt-dlp` from requirements).
+3. **asr** - `yt-dlp` audio -> `faster-whisper`, for caption-LESS videos, when installed.
 
 ### Batch / many videos - never all-N at once
 

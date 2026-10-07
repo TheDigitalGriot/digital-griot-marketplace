@@ -1,6 +1,7 @@
 ---
 name: cinopsis-release
-description: Cut a versioned Cinopsis release - commit the bump, tag it, push, SYNC THE SHARED MARKETPLACE MIRROR, re-prove the mirror actually moved, and create a GitHub release with no build assets. Use when the user says "release Cinopsis", "cut a Cinopsis release", "ship vX.Y.Z", "publish Cinopsis", "tag the release", or "sync the marketplace". Cinopsis is a Python plugin - there are no binaries, no VSIX, no installers to build, so every Prism build step is deliberately absent. The mirror sync is NOT optional: it is the step whose absence let the published mirror ship without viewer/ and without the census skill while every local check passed.
+description: >
+  Cut a versioned Cinopsis release - commit the bump, tag it, push, SYNC THE SHARED MARKETPLACE MIRROR, re-prove the mirror actually moved, and create a GitHub release with no build assets. Use when the user says "release Cinopsis", "cut a Cinopsis release", "ship vX.Y.Z", "publish Cinopsis", "tag the release", or "sync the marketplace". Cinopsis is a Python plugin - there are no binaries, no VSIX, no installers to build, so every Prism build step is deliberately absent. The mirror sync is NOT optional: it is the step whose absence let the published mirror ship without viewer/ and without the census skill while every local check passed.
 ---
 
 # Cinopsis Release

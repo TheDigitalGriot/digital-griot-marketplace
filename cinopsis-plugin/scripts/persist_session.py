@@ -38,6 +38,36 @@ def _entry_for(dir_name, src_sessions):
             "video_count": s.get("video_count", 0), "dir_name": dir_name}
 
 
+def _promote_frames(data_file, src_root, dst_root):
+    """Copy every relative frame_ref the session cites into the canonical frames dir (harvest B1).
+
+    capture_session_frames writes PNGs under the working DATA_DIR/frames and records
+    `frames/<id>_<t>.png`; the viewer serves canonical/frames. Without this, a session
+    promoted from a working copy points at files the canonical server never sees.
+    Absolute refs and refs that escape frames/ are left alone. Returns the count copied.
+    """
+    try:
+        data = json.loads(Path(data_file).read_text(encoding="utf-8"))
+    except Exception:
+        return 0
+    src_frames = (Path(src_root) / "frames").resolve()
+    dst_frames = (Path(dst_root) / "frames").resolve()
+    copied = 0
+    for step in (data.get("analysis") or {}).get("workflow_steps") or []:
+        ref = step.get("frame_ref") if isinstance(step, dict) else None
+        if not ref or not str(ref).startswith("frames/"):
+            continue
+        src = (Path(src_root) / ref).resolve()
+        if not src.is_relative_to(src_frames) or not src.is_file() or src_frames == dst_frames:
+            continue
+        dst = dst_frames / src.relative_to(src_frames)
+        if not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            copied += 1
+    return copied
+
+
 def persist_session(dir_name, src_sessions=None, dst_sessions=None):
     """Copy <dir_name> from src to canonical dst and merge the index.
 
@@ -57,6 +87,7 @@ def persist_session(dir_name, src_sessions=None, dst_sessions=None):
     if dst_dir.exists():
         shutil.rmtree(dst_dir)
     shutil.copytree(src_dir, dst_dir)
+    _promote_frames(dst_dir / "comparison_data.json", src.parent, dst.parent)
 
     entry = _entry_for(dir_name, src)
     index = [e for e in _read_index(dst / "index.json") if e.get("id") != entry["id"]]

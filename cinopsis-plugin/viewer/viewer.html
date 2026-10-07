@@ -202,7 +202,7 @@ input{font-family:inherit}
 .paper{background:var(--paper-hi); border-radius:var(--r-2xl); border:1px solid var(--card-line); color:var(--on-light); box-shadow:var(--card-soft)}
 .paper h2,.paper h3{color:var(--on-light)}
 .glass{background:var(--haze-04); backdrop-filter:var(--blur-frost); -webkit-backdrop-filter:var(--blur-frost); border:1px solid var(--rim-08); border-radius:var(--r-2xl); box-shadow:var(--depth-card), inset 0 1px 0 var(--rim-hi); position:relative}
-.stats{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:18px}
+.stats{display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-bottom:18px}
 .stat{padding:16px 18px; border-radius:var(--r-xl); position:relative; overflow:hidden; background:var(--paper-hi); border:1px solid var(--card-line); box-shadow:var(--card-soft)}
 .stat .lab{font-size:10.5px; letter-spacing:.13em; text-transform:uppercase; color:var(--on-light-2); font-weight:600}
 .stat .num{font-family:"Sora"; font-size:30px; font-weight:700; color:var(--on-light); line-height:1.05; margin-top:6px}
@@ -304,6 +304,7 @@ input{font-family:inherit}
 .gridv{position:absolute; top:0; bottom:0; width:1px; background:rgba(255,255,255,.07)}
 .ticks{display:flex; justify-content:space-between; margin-top:8px; padding:0 1px; font-family:"IBM Plex Mono"; font-size:10px; color:var(--on-dark-3)}
 .marker{position:absolute; top:50%; transform:translate(-50%,-50%); width:15px; height:15px; border-radius:50%; border:2.5px solid var(--char-2); cursor:pointer; transition:transform .18s var(--drum); z-index:5}
+.marker.step{width:9px; height:9px; border-radius:2px; border-width:1.5px; background:var(--on-light-3); z-index:4}
 .marker:hover{transform:translate(-50%,-50%) scale(1.35); z-index:31}
 .marker .mtip{position:absolute; bottom:24px; left:50%; transform:translateX(-50%) translateY(4px); white-space:nowrap; font-size:11px; padding:5px 9px; border-radius:7px; background:var(--ink); color:var(--on-dark); border:1px solid var(--rim-08); box-shadow:var(--depth-card); opacity:0; pointer-events:none; transition:.15s var(--song); font-family:"IBM Plex Mono"; z-index:32}
 .marker:hover .mtip{opacity:1; transform:translateX(-50%) translateY(0)}
@@ -362,6 +363,7 @@ input{font-family:inherit}
 .ws .conf.inferred{color:var(--t-amber)}
 .ws .frm{color:var(--on-light-3)}
 .ws .frm.miss{color:var(--on-light-3); opacity:.7; font-style:italic}
+.ws .frm-img{display:block; max-width:220px; max-height:124px; margin-top:6px; border-radius:8px; border:1px solid var(--card-line)}
 
 /* LIBRARY */
 .lib-toolbar{display:flex; gap:10px; align-items:center; margin-bottom:16px; flex-wrap:wrap}
@@ -1211,11 +1213,17 @@ body.resizing{cursor:col-resize; user-select:none}
       var g = v.digest || {}; return !!(g.core_takeaway || (g.key_points && g.key_points.length));
     }).length;
 
+    var steps = Array.isArray(a.workflow_steps) ? a.workflow_steps : [];
+    /* harvest B13: the tile shows the ARRAY count; a stats block that disagrees is named, not hidden */
+    function countNote(stated, actual, note) {
+      return (stated != null && Number(stated) !== actual) ? 'stats says ' + stated + ' - ' + note : note;
+    }
     var html = '<div class="stats">' +
       statTile('Videos', videos.length, 'this session', false) +
       statTile('Common topics', (stats.common_topics != null ? stats.common_topics : topics.length), 'clustered', false) +
       statTile('In companion DB', digested, 'deep transcript digests', true) +
-      statTile('Key moments', (stats.key_moments != null ? stats.key_moments : moments.length), 'captured &amp; marked', false) +
+      statTile('Key moments', moments.length, countNote(stats.key_moments, moments.length, 'captured &amp; marked'), false) +
+      statTile('Workflow steps', steps.length, countNote(stats.workflow_steps, steps.length, 'procedure captured'), false) +
       '</div>';
 
     var summary = a.unified_summary || d.unified_summary || d.summary || '';
@@ -1373,7 +1381,7 @@ body.resizing{cursor:col-resize; user-select:none}
           '</div>' +
         '</div>' +
       '</div>' +
-      buildTimeline(v, moments, dur) +
+      buildTimeline(v, moments, dur, stepsFor(a, v)) +
       '<div class="eyebrow" style="margin-top:22px">Key moments <span class="line"></span></div>' +
       '<div class="km-grid" id="kmGrid">' + moments.map(function (m, i) { return kmCard(m, i, v); }).join('') + '</div>' +
       wsSection(a, v);
@@ -1399,6 +1407,12 @@ body.resizing{cursor:col-resize; user-select:none}
   var UI_KINDS = { dropdown: 1, checkbox: 1, slider: 1, button: 1, field: 1, menu: 1,
                    tab: 1, canvas: 1, list: 1, radio: 1, other: 1 };
   var CONFIDENCES = { spoken: 1, shown: 1, inferred: 1 };
+
+  /* a relative frame_ref ('frames/<id>_<t>.png') -> its /frames URL; absolute paths stay text */
+  function frameUrl(ref) {
+    if (!ref || typeof ref !== 'string' || /^([a-zA-Z]:|\/|\\)/.test(ref)) return '';
+    return '/frames/' + ref.replace(/^frames\//, '').split('/').map(encodeURIComponent).join('/');
+  }
 
   function stepsFor(a, v) {
     var steps = (a && a.workflow_steps) || [];
@@ -1457,10 +1471,13 @@ body.resizing{cursor:col-resize; user-select:none}
       ? '<span class="conf ' + conf + '">' + esc(conf) + '</span>'
       : '<span class="conf inferred">no confidence</span>';
     var app = s.app ? '<span>' + esc(s.app) + '</span>' : '';
-    /* frame_ref is a PATH, never base64 - so it is NAMED here, not decoded */
-    var frame = s.frame_ref
-      ? '<span class="frm">&#9673; ' + esc(s.frame_ref) + '</span>'
-      : '<span class="frm miss">no frame captured</span>';
+    /* frame_ref is a PATH, never base64: served by GET /frames/<ref> (harvest B2) */
+    var fsrc = frameUrl(s.frame_ref);
+    var frame = fsrc
+      ? '<a class="frm" href="' + fsrc + '" target="_blank" rel="noopener"><img class="frm-img" loading="lazy" src="' +
+        fsrc + '" alt="frame at ' + esc(fmtTs(s.t_start)) + '"></a>'
+      : (s.frame_ref ? '<span class="frm">&#9673; ' + esc(s.frame_ref) + '</span>'
+                     : '<span class="frm miss">no frame captured</span>');
     return '<div class="foot"><span>' + span + '</span>' + app + confChip + frame + '</div>';
   }
 
@@ -1529,14 +1546,22 @@ body.resizing{cursor:col-resize; user-select:none}
     }).join(' ');
   }
 
-  function buildTimeline(v, moments, dur) {
-    var line = densityPath(moments, dur || 1);
+  function buildTimeline(v, moments, dur, steps) {
+    steps = steps || [];
+    /* harvest B5: steps count toward the density line and get their own markers */
+    var stepPts = steps.map(function (s) { return { timestamp: Number(s.t_start) || 0 }; });
+    var line = densityPath(moments.concat(stepPts), dur || 1);
     var ticks = '';
     for (var i = 0; i <= 5; i++) ticks += '<span>' + fmtTs((dur * i) / 5) + '</span>';
     var markers = moments.map(function (m, i) {
       var pct = dur ? Math.max(0, Math.min(100, ((Number(m.timestamp) || 0) / dur) * 100)) : 0;
       return '<div class="marker" style="left:' + pct.toFixed(2) + '%;background:' + hue(i) + '">' +
         '<span class="mtip">' + fmtTs(m.timestamp) + ' · ' + esc(m.label || m.description || 'moment') + '</span></div>';
+    }).join('') + steps.map(function (s) {
+      var pct = dur ? Math.max(0, Math.min(100, ((Number(s.t_start) || 0) / dur) * 100)) : 0;
+      return '<div class="marker step" style="left:' + pct.toFixed(2) + '%">' +
+        '<span class="mtip">' + fmtTs(s.t_start) + ' · step ' + esc(s.index != null ? s.index : '') + ' ' +
+        esc(s.action || '') + '</span></div>';
     }).join('');
     return '<div class="timeline-wrap">' +
       '<div class="timeline-top"><h4>Capture frames <span class="editflag off" id="editFlag">VIEW MODE</span></h4>' +
@@ -1558,7 +1583,7 @@ body.resizing{cursor:col-resize; user-select:none}
       '</div>' +
       '<div class="ticks">' + ticks + '</div>' +
       '<div class="tl-hint" id="tlHint"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>' +
-      '<span>Viewing — clicking the timeline seeks. The line is <b>moment density</b>. Flip <b>Edit mode</b> to capture your own frames.</span></div>' +
+      '<span>Viewing — clicking the timeline seeks. The line is <b>moment + step density</b>; square markers are workflow steps. Flip <b>Edit mode</b> to capture your own frames.</span></div>' +
       '<div class="tl-status" id="tlStatus"></div>' +
       '</div>';
   }
@@ -1573,7 +1598,7 @@ body.resizing{cursor:col-resize; user-select:none}
     line.classList.toggle('editing', on);
     hint.innerHTML = on
       ? 'Edit mode — click the timeline to <b>capture a frame</b> at that point.'
-      : 'Viewing — clicking the timeline seeks. The line is <b>moment density</b>. Flip <b>Edit mode</b> to capture your own frames.';
+      : 'Viewing — clicking the timeline seeks. The line is <b>moment + step density</b>; square markers are workflow steps. Flip <b>Edit mode</b> to capture your own frames.';
   }
 
   function wireTimeline(v, dur) {
@@ -1617,6 +1642,7 @@ body.resizing{cursor:col-resize; user-select:none}
         description: 'Captured from the companion timeline.',
         screenshot_base64: res.screenshot_base64
       });
+      if (currentSessionData.stats) currentSessionData.stats.key_moments = a.key_moments.length;
       status.textContent = 'Captured ' + fmtTs(seconds) + ' ✓';
       renderByVideo();
     }).catch(function (err) {
@@ -1667,6 +1693,12 @@ body.resizing{cursor:col-resize; user-select:none}
       var k = m.video_id + '_' + ts;
       if (seen[k]) return; seen[k] = 1; jobs.push({ o: m, id: m.video_id, ts: ts });
     });
+    (Array.isArray(a.workflow_steps) ? a.workflow_steps : []).forEach(function (st) {
+      if (!st || st.frame_ref || !st.video_id) return;
+      var ts = validTs(st.t_start); if (ts === null) return;
+      var k = st.video_id + '_' + ts;
+      if (seen[k]) return; seen[k] = 1; jobs.push({ o: st, id: st.video_id, ts: ts, step: true });
+    });
     (a.topics || []).forEach(function (t) {
       (t.entries || t.timestamps || []).forEach(function (e) {
         if (e.screenshot_base64 || e.screenshot || !e.video_id) return;
@@ -1697,7 +1729,10 @@ body.resizing{cursor:col-resize; user-select:none}
         return r.json();
       }).then(function (res) {
         if (res && res.screenshot_base64) {
-          job.o.screenshot_base64 = res.screenshot_base64; changed = true; fails = 0;
+          /* a step records its frame by PATH (capture_frame's <id>_<t>.png, served by /frames) */
+          if (job.step) job.o.frame_ref = 'frames/' + job.id + '_' + job.ts + '.png';
+          else job.o.screenshot_base64 = res.screenshot_base64;
+          changed = true; fails = 0;
         } else { fails++; }
       }).catch(function () { fails++; }).then(function () {
         active--;

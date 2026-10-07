@@ -12,6 +12,8 @@ from pathlib import Path
 from _utils import find_ytdlp, get_env, DATA_DIR, canonical_data_dir
 from capture_frames import extract_video_id, capture_frame
 from get_transcript import get_transcript_ytdlp, fetch_transcript, load_cached_transcript, format_transcript
+from sources import add_source_args
+from chrome_session import ChromeProfileLockedError
 from persist_session import persist_session
 SESSIONS_DIR = DATA_DIR / "sessions"
 CANONICAL_SESSIONS_DIR = canonical_data_dir() / "sessions"
@@ -62,6 +64,66 @@ def extract_chapters(info):
     return chapters
 
 
+
+def derive_stats(videos, analysis, given=None):
+    """The schema's count keys, always computed from the arrays they count.
+
+    A caller-supplied stats block keeps any EXTRA keys it carries, but never
+    overrides a count: the schema says stats are "integers matching array
+    lengths", and a hand-typed or carried-over count is exactly how they drift
+    (harvest B8, B9).
+    """
+    analysis = analysis or {}
+    stats = dict(given or {})
+    stats.update({
+        "total_videos": len(videos or []),
+        "common_topics": len(analysis.get("topics") or []),
+        "disagreements": len(analysis.get("disagreements") or []),
+        "key_moments": len(analysis.get("key_moments") or []),
+        "workflow_steps": len(analysis.get("workflow_steps") or []),
+    })
+    return stats
+
+
+def chapter_at(chapters, t):
+    """Title of the chapter whose [start_time, end_time) span covers t, else None."""
+    try:
+        t = float(t)
+    except (TypeError, ValueError):
+        return None
+    for ch in chapters or []:
+        try:
+            start, end = float(ch.get("start_time", 0)), float(ch.get("end_time", 0))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if start <= t < end or (end <= start and t >= start):
+            return ch.get("title") or None
+    return None
+
+
+def fill_phases(videos, analysis):
+    """Fill workflow_steps[].phase from the video's chapters where it is null (harvest B12).
+
+    Never overwrites a phase the authoring model set. Returns a list of
+    mismatch strings (model phase != covering chapter) for the caller to report;
+    the model's value stands - the report is the evidence, not a correction.
+    """
+    by_id = {v.get("id"): v for v in videos or [] if isinstance(v, dict)}
+    mismatches = []
+    for step in (analysis or {}).get("workflow_steps") or []:
+        if not isinstance(step, dict):
+            continue
+        chapters = (by_id.get(step.get("video_id")) or {}).get("chapters") or []
+        if not chapters:
+            continue
+        covering = chapter_at(chapters, step.get("t_start"))
+        if step.get("phase") in (None, ""):
+            step["phase"] = covering
+        elif covering and step["phase"] != covering:
+            mismatches.append(f"{step.get('video_id')} step {step.get('index')}: "
+                              f"phase {step['phase']!r}, chapter at t_start is {covering!r}")
+    return mismatches
+
 def fetch_video_metadata(video_id):
     """Fetch full metadata for a single video using yt-dlp."""
     cmd = [find_ytdlp(), "--dump-json", "--no-download", f"https://www.youtube.com/watch?v={video_id}"]
@@ -109,7 +171,7 @@ def fetch_thumbnail_base64(video_id):
     return None
 
 
-def process_video(video_id, cache_mode="auto"):
+def process_video(video_id, cache_mode="auto", allow_http_rungs=None, sources=None):
     """Fetch metadata, transcript, and thumbnail for a single video."""
     print(f"\nProcessing: {video_id}", flush=True)
 
@@ -133,7 +195,8 @@ def process_video(video_id, cache_mode="auto"):
             print("  [from-cache] no cached transcript; run fetch_transcripts.py first", flush=True)
     else:
         transcript, lang, _m = fetch_transcript(
-            video_id, allow_cache=(cache_mode != "refresh"), refresh=(cache_mode == "refresh"))
+            video_id, allow_cache=(cache_mode != "refresh"), refresh=(cache_mode == "refresh"),
+            allow_http_rungs=allow_http_rungs, sources=sources)
     metadata["transcript"] = transcript or []
     metadata["transcript_lang"] = lang
 
@@ -409,12 +472,19 @@ def add_videos_to_session(session_id, new_videos):
     new_count = len(comparison_data["videos"])
 
     comparison_data["session"]["video_count"] = new_count
-    comparison_data["stats"]["total_videos"] = new_count
 
-    comparison_data["analysis"]["unified_summary"] = ""
-    comparison_data["analysis"]["topics"] = []
-    comparison_data["analysis"]["disagreements"] = []
-    comparison_data["analysis"]["key_moments"] = []
+    # The cross-video synthesis is about the OLD set, so it is cleared. Per-video
+    # workflow_steps stay: each step is a truth about its own video and adding a
+    # video does not make it false (harvest B8). Stats are then recomputed from the
+    # arrays so no count survives against an emptied array.
+    analysis = comparison_data.setdefault("analysis", {})
+    analysis["unified_summary"] = ""
+    analysis["topics"] = []
+    analysis["disagreements"] = []
+    analysis["key_moments"] = []
+    analysis.setdefault("workflow_steps", [])
+    comparison_data["stats"] = derive_stats(comparison_data["videos"], analysis,
+                                            comparison_data.get("stats"))
 
     return update_session(session_id, comparison_data)
 
@@ -430,6 +500,7 @@ def main():
     parser.add_argument("--from-cache", action="store_true", help="Assemble from cached transcripts only (no fetch)")
     parser.add_argument("--refresh", action="store_true", help="Force re-fetch, ignore the transcript cache")
     parser.add_argument("--chunk", type=int, default=0, help="Process at most N of the given --urls this call (resume the rest with --add-to)")
+    add_source_args(parser)
     args = parser.parse_args()
     cache_mode = "only" if args.from_cache else ("refresh" if args.refresh else "auto")
 
@@ -458,8 +529,14 @@ def main():
         failed = []
         for vid in video_ids:
             try:
-                video_data = process_video(vid, cache_mode=cache_mode)
+                video_data = process_video(vid, cache_mode=cache_mode,
+                                           allow_http_rungs=True if args.allow_http_rungs else None,
+                                           sources=args.sources)
                 videos.append(video_data)
+            except ChromeProfileLockedError as e:
+                # F1 with browser-panel last: every remaining video would fail the same way. Stop loudly.
+                print(f"\nF1 - {e}", flush=True)
+                raise SystemExit(3)
             except Exception as e:
                 print(f"  [warn] skipping {vid}: {e}", flush=True)
                 failed.append(vid)

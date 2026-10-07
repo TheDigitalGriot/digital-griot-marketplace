@@ -89,7 +89,14 @@ Array. Empty (`[]`) for single-video sessions.
 ```
 
 ### `key_moments`
-Array. 3-5 moments per video.
+Array. UNCAPPED. (The 3-5 cap was removed by Gavin, 2026-10-01: he wants every important
+moment in a video captured, richly and workflow-specifically. His call, recorded here so a
+later reader does not 'correct' a cap back in.)
+
+The count follows the CONTENT, never a number chosen in advance. A 5-minute tutorial may
+yield a handful; an 86-minute webinar may legitimately yield many dozens. Do not sample,
+do not trim to a round number, and never drop a moment because a quota was reached -- if it
+mattered in the video, it belongs here.
 ```json
 [
   {
@@ -101,8 +108,12 @@ Array. 3-5 moments per video.
 ]
 ```
 
-- Keeps its 3-5 cap and keeps its meaning: significance, not procedure. It answers "what mattered
-  in this video". It is NOT the step list, and the two are never merged.
+- Keeps its meaning: significance, not raw procedure. It answers "what mattered in this video".
+  It is NOT the step list, and the two are never merged -- `workflow_steps` remains the ordered
+  procedure of record, uncapped, and is where a consumer goes to REDRAW the operation.
+- A key moment MAY be workflow-specific and richly described (name the panel, the control, the
+  value) -- richness is wanted. What separates it from a step is that it carries WHY the moment
+  matters, and it is not required to be contiguous, ordered, or span-bounded.
 
 ### `workflow_steps`
 Array, uncapped. The ordered, time-spanned procedure the video demonstrates — what the operator
