@@ -129,7 +129,7 @@ def format_report(results: Dict[str, dict]) -> str:
                 lines.append(
                     "[bold red][!]  Security: config.yaml is readable by other users[/bold red]"  # seam: English UI
                 )
-                lines.append("   Fix: chmod 600 ~/.agent-reach/config.yaml")  # seam: English UI
+                lines.append(f"   Fix: chmod 600 {config_path}")  # seam: English UI; R9 config lives in the Cinopsis data dir
         except OSError:
             pass
 

@@ -3,7 +3,7 @@
 
 Transcribes a URL (yt-dlp audio-only download) or a local audio/video file with
 Groq or OpenAI Whisper through reach.transcribe (lifted raw from Agent-Reach).
-Keys: groq_api_key / openai_api_key in ~/.agent-reach/config.yaml, or
+Keys: groq_api_key / openai_api_key in data/reach/.agent-reach/config.yaml (reach_home()), or
 GROQ_API_KEY / OPENAI_API_KEY. The local-pipeline transcript source uses the same
 engine as its `reach-audio` ASR backend.
 

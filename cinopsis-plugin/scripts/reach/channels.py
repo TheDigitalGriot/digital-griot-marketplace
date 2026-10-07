@@ -1,4 +1,5 @@
 # Cinopsis reach layer - raw lift of Agent-Reach (channel / probe / doctor model) at the pinned sha.
+# v3.1 (2026-10-07): the FULL upstream 16-channel registry; Cinopsis transcript sources are appended by sources.register().
 # Upstream logic is verbatim between the LIFT fences; every changed line ends in '# seam:'.
 # Gate: python scripts/verify_lift.py
 
@@ -75,6 +76,32 @@ class Channel(ABC):
         return "ok", f"{', '.join(self.backends) if self.backends else 'built-in'}"  # seam: English UI
 # <<< LIFT
 
+# Cinopsis seam helper (not upstream). R10 (2026-10-07): a platform channel whose check() talks to a
+# public API (bilibili search, v2ex, xueqiu) asks here first. The default policy is closed, so a plain
+# doctor run never touches the network. `doctor --live` opens it "once": each channel gets exactly one
+# lightweight request per process. The lifted upstream tests set "always" (their transports are mocked).
+# It sits between the two fences because the channel modules import it while this registry is loading.
+_NETWORK_PROBE_POLICY = "closed"  # closed | once | always
+_NETWORK_PROBED: set = set()
+
+
+def open_network_probes(policy: str = "once") -> None:
+    """Allow channel check() network probes (doctor --live)."""
+    global _NETWORK_PROBE_POLICY
+    _NETWORK_PROBE_POLICY = policy
+    _NETWORK_PROBED.clear()
+
+
+def network_probe_allowed(name: str) -> bool:
+    """True when channel `name` may send its one probe request now."""
+    if _NETWORK_PROBE_POLICY == "always":
+        return True
+    if _NETWORK_PROBE_POLICY != "once" or name in _NETWORK_PROBED:
+        return False
+    _NETWORK_PROBED.add(name)
+    return True
+
+
 # >>> LIFT agent-reach@a19a171f agent_reach/channels/__init__.py:1-65
 # -*- coding: utf-8 -*-
 """
@@ -85,13 +112,40 @@ from typing import List, Optional
 
 # Import all channels
 # Channel is defined above in this module (channels/base.py block).  # seam: base+registry share one module
-# Cinopsis carries YouTube plus its own transcript sources, not the 15 social/web platforms.  # seam: registry scope
+from reach.bilibili import BilibiliChannel  # seam: package import
+from reach.boss import BossChannel  # seam: package import
+from reach.exa_search import ExaSearchChannel  # seam: package import
+from reach.facebook import FacebookChannel  # seam: package import
+from reach.github import GitHubChannel  # seam: package import
+from reach.instagram import InstagramChannel  # seam: package import
+from reach.linkedin import LinkedInChannel  # seam: package import
+from reach.reddit import RedditChannel  # seam: package import
+from reach.rss import RSSChannel  # seam: package import
+from reach.twitter import TwitterChannel  # seam: package import
+from reach.v2ex import V2EXChannel  # seam: package import
+from reach.web import WebChannel  # seam: package import
+from reach.xiaohongshu import XiaoHongShuChannel  # seam: package import
+from reach.xiaoyuzhou import XiaoyuzhouChannel  # seam: package import
+from reach.xueqiu import XueqiuChannel  # seam: package import
 from reach.youtube import YouTubeChannel  # seam: package import
 
 ALL_CHANNELS: List[Channel] = [
-    # GitHub and Twitter channels are not carried; Cinopsis is a YouTube tool.  # seam: registry scope
+    GitHubChannel(),
+    TwitterChannel(),
     YouTubeChannel(),
-    # transcript sources are appended by scripts/sources at import (sources.register)  # seam: registry scope
+    RedditChannel(),
+    FacebookChannel(),
+    InstagramChannel(),
+    BilibiliChannel(),
+    XiaoHongShuChannel(),
+    LinkedInChannel(),
+    BossChannel(),
+    XiaoyuzhouChannel(),
+    V2EXChannel(),
+    XueqiuChannel(),
+    RSSChannel(),
+    ExaSearchChannel(),
+    WebChannel(),
 ]
 
 

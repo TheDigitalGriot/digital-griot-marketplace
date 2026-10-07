@@ -229,3 +229,17 @@ def render_ytdlp_fix_command() -> str:
         "}"
     )
 # <<< LIFT
+
+
+# Cinopsis seam helper (not upstream). R9 (2026-10-07): every file the lifted reach layer writes for
+# itself - Config's config.yaml, the cookie-sync session files, the xhs cookie export - lands under this
+# one gitignored directory, never in the real $HOME. It stands in for home_dir() at exactly those call
+# sites, so upstream's home-relative layout is kept inside it (.agent-reach/config.yaml,
+# .config/xfetch/session.json, .config/bird/credentials.env). CINOPSIS_REACH_HOME overrides it.
+def reach_home() -> Path:
+    """Return the gitignored directory that holds all reach-layer state."""
+    override = os.environ.get("CINOPSIS_REACH_HOME")
+    if override:
+        return Path(os.path.abspath(os.path.expanduser(override)))
+    data_dir = os.environ.get("CLAUDE_PLUGIN_DATA") or str(Path(__file__).resolve().parents[2] / "data")
+    return Path(os.path.abspath(data_dir)) / "reach"

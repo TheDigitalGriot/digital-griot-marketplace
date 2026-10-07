@@ -372,7 +372,17 @@ def doctor_text(as_json: bool = False, live: bool = False) -> str:
     """The report as a string (the MCP tool uses this; the CLI prints it)."""
     from reach.config import Config
     from reach.doctor import check_all, format_report
-    results = check_all(Config(read_only=True))
+    if live:
+        # R10: the platform channels that probe a public API (bilibili, v2ex, xueqiu) send
+        # exactly one request each, only here.
+        from reach.channels import open_network_probes
+        open_network_probes("once")
+        try:
+            results = check_all(Config(read_only=True))
+        finally:
+            open_network_probes("closed")  # a long-lived MCP server must not stay open after one live call
+    else:
+        results = check_all(Config(read_only=True))
     order, origin = sources.resolve_order()
     payload = {"version": cinopsis_version(), "source_order": list(order), "order_from": origin,
                "channels": results}

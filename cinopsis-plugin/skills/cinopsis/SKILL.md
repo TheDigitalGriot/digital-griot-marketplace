@@ -63,7 +63,7 @@ On Cowork there is no Bash tool, so the same operations run through a local-stdi
 - `launch_viewer(session_id, port)` — start the dashboard, returns a localhost URL to open
 - `capture_frame(video_id, timestamp_seconds)` — grab a frame
 - `harvest_frames(session)` — write a frame_ref onto every workflow step of a session
-- `doctor(json_output, live)` — which transcript sources are ready on this instance, and what each one needs
+- `doctor(json_output, live)` — which transcript sources and Agent-Reach channels (all 16) are ready on this instance, and what each one needs
 - `get_description(video_id)` — write `description_<id>.txt` + `links_<id>.json` (github / gitlab / huggingface)
 - `watch_video(source, question, engine, detail, start, end)` — the Watch verb: frames + transcript, or Gemini's answer
 - `watch_frames(video_id, mode, max_frames)` — keyframe / scene frame selection across a whole video
@@ -155,7 +155,9 @@ Gavin's desk keeps the default. A portable / Hazine install with no browser:
 **Run the doctor first** when a transcript misses: `python scripts/doctor.py` (MCP `doctor`)
 reports every source's real state - yt-dlp executed, the Chrome debug port probed on loopback,
 keys present or absent (never printed) - plus the live order and where it came from. `--live` adds
-at most one lightweight request per network source, each behind its door.
+at most one lightweight request per network source, each behind its door. Since v3.1.0 it also
+reports Agent-Reach's full 16-channel registry (github ... web, lifted whole); upstream's
+`agent-reach <cmd>` hints mean `python scripts/reach_cli.py <cmd>` here.
 
 **Named outcomes:** **F1** `ChromeProfileLockedError` - no Chrome debug port and `browser-panel` is
 the last selected source (run `scripts/launch_chrome_debug.ps1` once, or select another source);

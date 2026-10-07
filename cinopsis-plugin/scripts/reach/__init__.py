@@ -13,3 +13,8 @@ from reach.core import AgentReach  # seam: package import
 
 __all__ = ["AgentReach"]
 # <<< LIFT
+
+# Cinopsis seam (not upstream): upstream reaches a channel as agent_reach.channels.<name>, which always
+# runs the channels package __init__ (the registry) first. The flat reach/<name>.py layout loses that
+# ordering, so the package loads the registry eagerly; a cold `import reach.boss` then finds it ready.
+import reach.channels  # noqa: E402,F401

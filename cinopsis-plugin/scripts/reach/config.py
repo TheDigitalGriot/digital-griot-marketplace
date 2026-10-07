@@ -24,6 +24,7 @@ from reach.paths import (  # seam: package import
     home_dir,
     make_private_dir,
     read_small_text_no_follow,
+    reach_home,  # seam: R9 reach state lives in the gitignored Cinopsis data dir
 )
 
 _MAX_CONFIG_BYTES = 1024 * 1024
@@ -104,7 +105,7 @@ def _atomic_write_yaml(target: Path, data: dict) -> None:
 class Config:
     """Manages Agent Reach configuration."""
 
-    CONFIG_DIR = home_dir() / ".agent-reach"
+    CONFIG_DIR = reach_home() / ".agent-reach"  # seam: R9 config.yaml lives in the gitignored Cinopsis data dir, not ~/.agent-reach
     CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
     # Feature → required config keys
