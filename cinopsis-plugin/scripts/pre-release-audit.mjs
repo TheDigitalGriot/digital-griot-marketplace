@@ -131,9 +131,17 @@ const walk = (dir) =>
         return e.isDirectory() ? walk(p) : [p];
       })
     : [];
-const base =
-  (run('git', ['describe', '--tags', '--abbrev=0']).stdout || '').trim() ||
-  (run('git', ['rev-parse', '--verify', 'main']).status === 0 ? 'main' : '');
+// The scope is "what this release changes". Before tagging that is <latest tag>..HEAD. AFTER
+// tagging (cinopsis-release Step 6 re-runs this audit) the latest tag IS HEAD, so that range is
+// empty and the zero-scan guard below would fail every release by construction - measured on
+// v3.0.0. When the newest tag points at HEAD, diff from the tag before it instead.
+const describe = (rev) => (run('git', ['describe', '--tags', '--abbrev=0', ...(rev ? [rev] : [])]).stdout || '').trim();
+const headSha = (run('git', ['rev-parse', 'HEAD']).stdout || '').trim();
+let base = describe();
+if (base && (run('git', ['rev-list', '-n', '1', base]).stdout || '').trim() === headSha) {
+  base = describe(`${base}~1`) || base;  // ~1 not ^: cmd.exe eats ^ (shell:true on win32)
+}
+if (!base) base = run('git', ['rev-parse', '--verify', 'main']).status === 0 ? 'main' : '';
 let changed = null;
 if (base) {
   const r = run('git', ['diff', '--name-only', `${base}..HEAD`]);
