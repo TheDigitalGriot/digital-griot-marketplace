@@ -26,7 +26,8 @@ from fetch_playlist import fetch_playlist_new, private_playlist_hint
 from get_transcript import fetch_transcript, format_transcript, integrity_gate, describe_failure
 from chrome_session import ChromeProfileLockedError
 from capture_frames import (extract_video_id, capture_frame as _capture_frame,
-                            capture_session_frames, resolve_session_file, BATCH_CHUNK, DATA_DIR)
+                            capture_session_frames, capture_session_frames_local,
+                            resolve_session_file, BATCH_CHUNK, DATA_DIR, ENGINES as _FRAME_ENGINES)
 from compare_videos import parse_urls, process_video, build_comparison_data, save_session
 from compare_server import create_app
 
@@ -376,8 +377,13 @@ def capture_frame(video_id: str, timestamp_seconds: int) -> str:
 
 
 @mcp.tool()
-def harvest_frames(session: str) -> str:
+def harvest_frames(session: str, engine: str = "stream") -> str:
     """Paired harvest pass: write a frame_ref onto every workflow step of a session.
+
+    engine="stream" (default, original) seeks a stream URL once per timestamp.
+    engine="local" downloads each video ONCE behind the same frames gate, cuts every
+    step t_start and key_moment frame with the lifted extract_at_timestamps engine,
+    and deletes the video (capture_frames.py --engine local). A video is one slice.
 
     Calls capture_session_frames() per video, in BATCH_CHUNK slices, and checks the
     ratelimit "frames" gate BETWEEN slices. When the gate is cooling it stops,
@@ -396,6 +402,8 @@ def harvest_frames(session: str) -> str:
     is reported as `malformed`, never counted as a capture failure.
     """
     import ratelimit
+    if engine not in _FRAME_ENGINES:
+        return json.dumps({"status": "failed", "note": f"engine must be one of {list(_FRAME_ENGINES)}"})
     data_file = resolve_session_file(session)
     if not data_file.exists():
         return json.dumps({"status": "failed", "note": f"No comparison_data.json at {data_file}"})
@@ -431,19 +439,24 @@ def harvest_frames(session: str) -> str:
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         tmp.replace(data_file)
 
+    chunk_size = BATCH_CHUNK if engine == "stream" else None
     for video_id, vsteps in pending.items():
-        for start in range(0, len(vsteps), BATCH_CHUNK):
+        size = chunk_size or len(vsteps)   # local engine: one download per video, one slice
+        for start in range(0, len(vsteps), size):
             gate = ratelimit.status()
             if gate["blocked"]:
                 summary["stopped_by_gate"] = True
                 summary["seconds_left"] = gate["seconds_left"]
                 break
-            chunk = vsteps[start:start + BATCH_CHUNK]
+            chunk = vsteps[start:start + size]
             sub = {"analysis": {"workflow_steps": chunk,
                                 "key_moments": [m for m in moments if m.get("video_id") == video_id]
                                 if start == 0 else []}}
             with _quiet_stdout():
-                res = capture_session_frames(sub, verbose=False)
+                if engine == "local":
+                    res = capture_session_frames_local(sub, verbose=False)
+                else:
+                    res = capture_session_frames(sub, verbose=False)
             summary["captured"] += res["captured"]
             gate = ratelimit.status()
             lost = [s for s in chunk if not _framed(s)]
@@ -461,7 +474,7 @@ def harvest_frames(session: str) -> str:
             break
 
     remaining = sum(1 for s in steps if not _framed(s))
-    summary.update({"status": "partial" if summary["stopped_by_gate"] else "ok",
+    summary.update({"status": "partial" if summary["stopped_by_gate"] else "ok", "engine": engine,
                     "remaining": remaining, "total_steps": len(steps),
                     "malformed": len(malformed),
                     "frames_dir": str(DATA_DIR / "frames"),

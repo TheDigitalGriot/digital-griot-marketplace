@@ -24,7 +24,8 @@ Passing `door=` cools them asymmetrically: a Door-1 block cools ONLY Door 1, so
 the still-working Door 2 stays reachable; a Door-2 block means the IP is in real
 trouble and cools EVERYTHING (the shared block). A third door, `cdp` (Door 3), is
 the browser-driven rung: it drives a real logged-in Chrome, so an HTTP-level block
-must not cool it and a cdp block cools ONLY cdp. Calls that pass no `door` behave
+must not cool it and a cdp block cools ONLY cdp. A fourth, `metadata`, carries the
+yt-dlp metadata + thumbnail calls of compare_videos assembly and cools only itself. Calls that pass no `door` behave
 exactly as before — they read and arm the shared cooldown.
 
 Fail-closed: if the state file is unreadable, the gate still enforces minimum
@@ -59,6 +60,10 @@ DOOR_INNERTUBE = "innertube"    # Door 2: youtubei/v1/get_transcript panel
 # real cookies/session. A qualitatively different surface from an HTTP POST, so it
 # survives an HTTP-door block and gets its own independent per-door cooldown.
 DOOR_CDP = "cdp"
+# Door 4: yt-dlp video metadata (--dump-json) and thumbnails (--write-thumbnail) for
+# compare_videos assembly (cc5-batch2, drift 235). Not a transcript route, so it cools
+# on its own: a metadata block never closes the caption doors, and vice versa.
+DOOR_METADATA = "metadata"
 
 
 class RateLimited(Exception):

@@ -67,9 +67,49 @@ def create_app(data_dir=None):
         with open(data_file, encoding="utf-8") as f:
             return jsonify(json.load(f))
 
+    def _frame_roots():
+        """The two homes a frame can live in (harvest B1): canonical first, then DATA_DIR."""
+        from _utils import DATA_DIR
+        return (data_dir / "frames", Path(DATA_DIR) / "frames")
+
+    def _cached_frame(video_id, timestamp, frame_ref=None):
+        """An already-captured frame for (video_id, timestamp), or the given frame_ref, or None.
+
+        Disk only: this never touches the network. Both frame homes are searched, so a frame the
+        local engine wrote to DATA_DIR is a hit here exactly as it is on /frames/.
+        """
+        names = []
+        if isinstance(frame_ref, str) and frame_ref:
+            names.append(frame_ref[len("frames/"):] if frame_ref.startswith("frames/") else frame_ref)
+        names.append(f"{video_id}_{int(timestamp)}.png")
+        for root in _frame_roots():
+            root = root.resolve()
+            for rel in names:
+                target = (root / rel).resolve()
+                if target.is_relative_to(root) and target.is_file():
+                    return target
+        return None
+
+    def _session_dir_name(session_id):
+        index_file = sessions_dir / "index.json"
+        if not session_id or not index_file.exists():
+            return None
+        with open(index_file, encoding="utf-8") as f:
+            entry = next((e for e in json.load(f) if e.get("id") == session_id), None)
+        return entry.get("dir_name") if entry else None
+
     @app.route("/api/screenshot", methods=["POST"])
     def take_screenshot():
-        body = request.get_json()
+        """Serve an existing frame; a miss is a clean 404, never a network call.
+
+        cc5-batch2 leak 1: opening the viewer used to fall through to capture_frame's live
+        stream-URL grab on every cache miss. Now a live grab happens only when the request
+        explicitly asks for it (body live: true) AND the operator opted in with
+        CINOPSIS_VIEWER_LIVE_FRAMES=1, and then only through capture_frame -> get_stream_url,
+        which sits behind ratelimit.check_gate("frames").
+        """
+        import base64
+        body = request.get_json(silent=True)
         if not body or "video_id" not in body or "timestamp" not in body:
             return jsonify({"error": "video_id and timestamp required"}), 400
 
@@ -81,12 +121,50 @@ def create_app(data_dir=None):
         if timestamp < 0:
             return jsonify({"error": "timestamp must be >= 0"}), 400
 
-        frames_dir = data_dir / "frames"
-        b64 = capture_frame(video_id, timestamp, frames_dir)
+        hit = _cached_frame(video_id, timestamp, body.get("frame_ref"))
+        if hit is not None:
+            return jsonify({"video_id": video_id, "timestamp": timestamp,
+                            "frame_ref": f"frames/{hit.name}",
+                            "screenshot_base64": base64.b64encode(hit.read_bytes()).decode("utf-8")})
 
-        if b64:
-            return jsonify({"video_id": video_id, "timestamp": timestamp, "screenshot_base64": b64})
-        return jsonify({"error": "Failed to capture frame"}), 500
+        live_requested = body.get("live") is True
+        live_enabled = os.environ.get("CINOPSIS_VIEWER_LIVE_FRAMES") == "1"
+        if live_requested and live_enabled:
+            b64 = capture_frame(video_id, timestamp, data_dir / "frames")
+            if b64:
+                return jsonify({"video_id": video_id, "timestamp": timestamp,
+                                "frame_ref": f"frames/{video_id}_{timestamp}.png",
+                                "screenshot_base64": b64})
+            return jsonify({"error": "live-grab-failed",
+                            "hint": "the frames gate may be cooling; see ratelimit status"}), 502
+
+        dir_name = _session_dir_name(body.get("session")) or "<dir>"
+        return jsonify({"error": "frame-not-captured", "video_id": video_id, "timestamp": timestamp,
+                        "hint": f"capture_frames.py --engine local --session {dir_name}",
+                        "live": "set CINOPSIS_VIEWER_LIVE_FRAMES=1 and send live: true to grab it live"
+                                if live_requested else None}), 404
+
+    @app.route("/api/frames-index")
+    def frames_index():
+        """Which seconds already have a frame on disk, per video id. Disk only, no network.
+
+        The viewer reads this once on session open to show key-moment and topic frames
+        without ever POSTing /api/screenshot.
+        """
+        ids = [i for i in (request.args.get("video_ids") or "").split(",") if i]
+        out = {}
+        for vid in ids:
+            vid = extract_video_id(vid)
+            seen = set()
+            for root in _frame_roots():
+                if not root.is_dir():
+                    continue
+                for f in root.glob(f"{vid}_*.png"):
+                    tail = f.stem[len(vid) + 1:]
+                    if tail.isdigit():
+                        seen.add(int(tail))
+            out[vid] = sorted(seen)
+        return jsonify(out)
 
     @app.route("/frames/<path:name>")
     def frames(name):
@@ -96,9 +174,8 @@ def create_app(data_dir=None):
         the working DATA_DIR that capture_session_frames writes. Both are searched,
         canonical first; anything that escapes a frames dir is refused.
         """
-        from _utils import DATA_DIR
         rel = name[len("frames/"):] if name.startswith("frames/") else name
-        for root in (data_dir / "frames", Path(DATA_DIR) / "frames"):
+        for root in _frame_roots():
             root = root.resolve()
             target = (root / rel).resolve()
             if not target.is_relative_to(root):

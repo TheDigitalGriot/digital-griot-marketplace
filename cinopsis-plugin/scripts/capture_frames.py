@@ -245,6 +245,191 @@ def capture_session_frames(comparison_data, output_dir=None, verbose=True):
     }
 
 
+# ---------------------------------------------------------------------------
+# --engine local: the per-step engine (Gavin's ruling, cc5-batch1 stage 0).
+# The stream engine above resolves a stream URL and seeks it ONCE PER TIMESTAMP, so
+# a 120-step video costs 120 yt-dlp URL resolutions against the frames gate. The
+# local engine downloads each video ONCE (media.download.download_url, 720p cap,
+# behind the same "frames" gate), lets the lifted frames.extract_at_timestamps cut
+# exactly one frame at every step t_start and key_moment timestamp, writes
+# frames/<video_id>_<int t>.png, sets frame_ref as a relative path, and deletes the
+# downloaded video. Same filenames as the stream engine, so either engine's frames
+# satisfy the other's cache.
+# ---------------------------------------------------------------------------
+ENGINES = ("stream", "local")
+LOCAL_RESOLUTION = 1280   # frames are read back for UI labels: keep the 720p source legible
+
+
+def _jpg_to_png(src, dst):
+    """The lifted engine writes JPEG cues; the schema's frame_ref convention is .png."""
+    try:
+        from PIL import Image
+        with Image.open(src) as im:
+            im.save(dst, "PNG")
+        return True
+    except ImportError:
+        result = subprocess.run([find_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-i",
+                                 str(src), str(dst)], capture_output=True, timeout=60,
+                                env=get_env(), stdin=subprocess.DEVNULL)
+        return result.returncode == 0 and Path(dst).exists()
+
+
+def _download_video(video_id, runs_dir):
+    from media import download
+    return download.download_url(f"https://www.youtube.com/watch?v={video_id}", runs_dir)
+
+
+def _reason(exc):
+    """The line that explains a failure. yt-dlp prints WARNINGs first and the ERROR last,
+    so the head of the message is the wrong end to keep."""
+    lines = [ln.strip() for ln in str(exc).splitlines() if ln.strip()]
+    for ln in reversed(lines):
+        if "ERROR" in ln or "failed" in ln.lower():
+            return ln[:200]
+    return (lines[-1] if lines else str(exc))[:200]
+
+
+def capture_video_local(video_id, timestamps, output_dir=None, fetch=None, resolution=LOCAL_RESOLUTION):
+    """Download one video once, cut a PNG at every timestamp, delete the download.
+
+    Returns {ts: frame_ref or None, ...} plus a reason string per failed ts. Timestamps
+    whose PNG already exists are served from disk; when ALL of them exist the video is
+    never downloaded and the network is not touched. Raises ratelimit.RateLimited when
+    the frames gate is cooling, before any network call.
+    """
+    import shutil
+    import tempfile
+    from media import frames
+
+    out_dir = Path(output_dir) if output_dir else DATA_DIR / FRAMES_SUBDIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    refs, reasons = {}, {}
+    todo = []
+    for ts in timestamps:
+        ts = int(ts)
+        if (out_dir / f"{video_id}_{ts}.png").exists():
+            refs[ts] = frame_ref_for(video_id, ts, output_dir)
+        elif ts not in todo:
+            todo.append(ts)
+    if not todo:
+        return refs, reasons
+
+    try:
+        import ratelimit
+    except ImportError:
+        ratelimit = None
+    if ratelimit is not None:
+        ratelimit.check_gate("frames")       # raises RateLimited: no network touched
+    media = None
+    cue_dir = Path(tempfile.mkdtemp(prefix=f"cues-{video_id}-", dir=out_dir))
+    # A private parent for this one download: the lifted downloader makes its run dir inside
+    # it, so a FAILED download (which returns no run_dir) is still cleaned up.
+    (DATA_DIR / "media_runs").mkdir(parents=True, exist_ok=True)
+    runs_dir = Path(tempfile.mkdtemp(prefix=f"frames-{video_id}-", dir=DATA_DIR / "media_runs"))
+    try:
+        try:
+            media = (fetch or _download_video)(video_id, runs_dir)
+        except SystemExit as exc:          # the lifted downloader is a CLI: it reports by SystemExit
+            if ratelimit is not None:
+                ratelimit.record_outcome(False, _reason(exc))
+            for ts in todo:
+                refs[ts], reasons[ts] = None, f"download failed: {_reason(exc)}"
+            return refs, reasons
+        if ratelimit is not None and media.get("downloaded", True):
+            ratelimit.record_outcome(True)
+        # A cue at or past the end of the video gives ffmpeg 8.x no frame, its mjpeg encoder
+        # then fails to open, and the lifted engine raises for the WHOLE batch - so one bad
+        # timestamp would sink every frame of the video. Probe the duration (lifted ffprobe,
+        # local) and keep only cues inside it; if a batch still fails, retry cue by cue.
+        try:
+            duration = frames.get_metadata(media["video_path"])["duration_seconds"]
+        except SystemExit:
+            duration = None
+        inside = [t for t in todo if duration is None or t < duration]
+        for ts in todo:
+            if ts not in inside:
+                refs[ts], reasons[ts] = None, f"t={ts}s is past the end of the video ({duration:.0f}s)"
+        cues, errors = [], {}
+        try:
+            cues, _meta = frames.extract_at_timestamps(media["video_path"], cue_dir, inside,
+                                                       resolution=resolution) if inside else ([], {})
+        except SystemExit:
+            for ts in inside:
+                single = cue_dir / f"t{ts}"
+                try:
+                    one, _meta = frames.extract_at_timestamps(media["video_path"], single, [ts],
+                                                              resolution=resolution)
+                    cues.extend(one)
+                except SystemExit as exc:
+                    errors[ts] = f"extract failed: {_reason(exc)}"
+        got = {}
+        for cue in cues:
+            ts = int(round(cue["requested_timestamp_seconds"]))
+            png = out_dir / f"{video_id}_{ts}.png"
+            if _jpg_to_png(cue["path"], png) and png.stat().st_size > 0:
+                got[ts] = frame_ref_for(video_id, ts, output_dir)
+        for ts in inside:
+            refs[ts] = got.get(ts)
+            if refs[ts] is None:
+                reasons[ts] = errors.get(ts, "ffmpeg emitted no frame at this timestamp")
+    finally:
+        shutil.rmtree(cue_dir, ignore_errors=True)
+        if media and media.get("run_dir") and media.get("downloaded", True):
+            shutil.rmtree(media["run_dir"], ignore_errors=True)   # the video is deleted after
+        shutil.rmtree(runs_dir, ignore_errors=True)
+    return refs, reasons
+
+
+def capture_session_frames_local(comparison_data, output_dir=None, verbose=True, fetch=None):
+    """--engine local twin of capture_session_frames: one download per video, in place.
+
+    Writes frame_ref onto every workflow step (relative path, or None only where capture
+    failed, with the reason in the returned summary). If the frames gate trips, stops,
+    leaves the remaining steps' frame_ref untouched, and reports stopped_by_gate.
+    """
+    import ratelimit
+    wanted = collect_capture_timestamps(comparison_data)
+    refs, failures = {}, {}
+    summary = {"captured": 0, "failed": 0, "videos": len(wanted),
+               "timestamps": sum(len(v) for v in wanted.values()), "engine": "local",
+               "downloads": 0, "stopped_by_gate": False, "gate_reason": "", "failures": failures}
+    done_videos = set()
+    for video_id, timestamps in wanted.items():
+        if verbose:
+            print(f"  {video_id}: {len(timestamps)} timestamps (local engine)", flush=True)
+        cached = all((Path(output_dir) if output_dir else DATA_DIR / FRAMES_SUBDIR)
+                     .joinpath(f"{video_id}_{int(t)}.png").exists() for t in timestamps)
+        try:
+            vrefs, reasons = capture_video_local(video_id, timestamps, output_dir, fetch=fetch)
+        except ratelimit.RateLimited as exc:
+            summary["stopped_by_gate"] = True
+            summary["gate_reason"] = str(exc)
+            if verbose:
+                print(f"  {exc}", flush=True)
+            break
+        if not cached:
+            summary["downloads"] += 1
+        done_videos.add(video_id)
+        for ts, ref in vrefs.items():
+            refs[(video_id, ts)] = ref
+            if ref:
+                summary["captured"] += 1
+            else:
+                summary["failed"] += 1
+                failures[f"{video_id}_{ts}"] = reasons.get(ts, "unknown")
+
+    for step in (comparison_data.get("analysis") or {}).get("workflow_steps") or []:
+        if not isinstance(step, dict) or step.get("video_id") not in done_videos:
+            continue
+        try:
+            ts = int(float(step.get("t_start")))
+        except (TypeError, ValueError):
+            step["frame_ref"] = None
+            continue
+        step["frame_ref"] = refs.get((step.get("video_id"), ts))
+    return summary
+
+
 def resolve_session_file(session):
     """Resolve --session to a comparison_data.json path.
 
@@ -259,8 +444,10 @@ def resolve_session_file(session):
     return DATA_DIR / "sessions" / session / "comparison_data.json"
 
 
-def capture_session_file(session, output_dir=None, verbose=True):
+def capture_session_file(session, output_dir=None, verbose=True, engine="stream"):
     """Load a session, capture every step frame, write frame_ref back to disk."""
+    if engine not in ENGINES:
+        raise ValueError(f"engine must be one of {ENGINES}")
     data_file = resolve_session_file(session)
     if not data_file.exists():
         raise FileNotFoundError(f"No comparison_data.json at {data_file}")
@@ -268,7 +455,10 @@ def capture_session_file(session, output_dir=None, verbose=True):
     with open(data_file, encoding="utf-8") as f:
         comparison_data = json.load(f)
 
-    summary = capture_session_frames(comparison_data, output_dir, verbose=verbose)
+    if engine == "local":
+        summary = capture_session_frames_local(comparison_data, output_dir, verbose=verbose)
+    else:
+        summary = capture_session_frames(comparison_data, output_dir, verbose=verbose)
 
     with open(data_file, "w", encoding="utf-8") as f:
         json.dump(comparison_data, f, indent=2, ensure_ascii=False)
@@ -351,6 +541,9 @@ def main():
                         help="Let Watch's frame engine pick frames across the whole video "
                              "(keyframes = I-frames, scene = scene cuts) instead of --timestamps")
     parser.add_argument("--max-frames", type=int, default=50, help="Cap for --select (default 50)")
+    parser.add_argument("--engine", choices=ENGINES, default="stream",
+                        help="--session engine: stream = seek a stream URL per timestamp (original); "
+                             "local = download each video once, cut every step frame, delete the video")
     args = parser.parse_args()
 
     if args.select:
@@ -367,12 +560,20 @@ def main():
         return
 
     if args.session:
-        summary = capture_session_file(args.session, args.output_dir, verbose=not args.json)
+        summary = capture_session_file(args.session, args.output_dir, verbose=not args.json,
+                                       engine=args.engine)
         if args.json:
             print(json.dumps(summary, indent=2))
+            if summary.get("stopped_by_gate"):
+                raise SystemExit(3)
         else:
             print(f"  {summary['captured']} captured, {summary['failed']} failed "
                   f"across {summary['videos']} video(s)")
+            for key, why in (summary.get("failures") or {}).items():
+                print(f"    failed {key}: {why}")
+            if summary.get("stopped_by_gate"):
+                print(f"  STOPPED BY FRAMES GATE: {summary['gate_reason']}")
+                raise SystemExit(3)
         return
 
     if not (args.video_id and args.timestamps):

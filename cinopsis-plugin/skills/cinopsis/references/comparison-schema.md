@@ -47,6 +47,23 @@ returns in its metadata dump, so it costs no extra network call.
 - Chapters are the source of `phase` on `analysis.workflow_steps`: the chapter whose span covers a
   step's `t_start` names that step's phase. No chapters means `phase: null`, never a guessed phase.
 
+### Digest provenance (optional per-video fields)
+
+Absent on a normal transcript-backed run. Written by offline rebuilds (`scripts/backfill_catchups.py`)
+to say where a digest came from, and read by `scripts/verify_invariants.py` INV2, which fails any
+digest with no cached transcript and no declared non-transcript source.
+
+| Field | Values | Meaning |
+|---|---|---|
+| `digest_source` | `transcript` | written from the cached transcript |
+| | `description` | written from the cached video description - no transcript behind it |
+| | `catchup-markdown` | the catch-up markdown's own takeaway, kept as-is - no transcript behind it |
+| `id_status` | `inline` / `unresolved` | id read from the source, or a synthetic `unresolved-<hash>` id |
+| `quality_flag` | string | why the source transcript limits the digest (short, garbled, promo-heavy) |
+
+A non-transcript source never fills `key_points` or `why_it_matters` by restating `core_takeaway`;
+those stay empty and the validator reports them.
+
 ---
 
 ## `analysis` Object

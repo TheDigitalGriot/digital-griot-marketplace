@@ -33,6 +33,19 @@ compare_server._build_video_lookup() skips any video with a falsy id -- an empty
 id would make them invisible in the very library view they belong in. They are
 tagged id_status='unresolved' so a real id can be filled in later.
 
+DIGEST OVERLAY (offline, transcript-derived)
+--------------------------------------------
+Some catch-up formats carry only a one-line takeaway (08-16, 08-20), so their
+key_points / why_it_matters are empty. A per-day overlay at
+.prism/local/backfill/digest-overlay-<day>.json fills them from a digest written
+over the CACHED transcript (the digest-writer path, never this script):
+  {"day": "<day>", "videos": {"<id>": {"core_takeaway": str, "key_points": [str],
+   "why_it_matters": str, "digest_source": "transcript", "quality_flag": str?}}}
+An entry is applied ONLY when a cached transcript exists for that id, so the
+overlay can never present a transcript-derived digest with no transcript behind it
+(INV2). Videos with no cached transcript keep their source takeaway and empty
+fields - they are reported, never padded.
+
 Idempotent: a day whose session title is already in the canonical index is
 skipped unless --force.
 
@@ -115,6 +128,73 @@ def cached_transcript_ids():
     return ids
 
 
+OVERLAY_FIELDS = ("core_takeaway", "key_points", "why_it_matters")
+
+
+def overlay_path(day):
+    return ARTIFACT_DIR / f"digest-overlay-{day}.json"
+
+
+def load_digest_overlay(day, path=None):
+    """{id: entry} from the day's digest overlay, or {} when there is none."""
+    path = path or overlay_path(day)
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if data.get("day") not in (None, day):
+        raise ValueError(f"{path.name} is for day {data.get('day')!r}, not {day}")
+    return data.get("videos") or {}
+
+
+def apply_digest_overlay(videos, overlay, cached_ids):
+    """Replace digest fields with transcript-derived ones, in place.
+
+    Returns (applied, refused, unmatched): refused = overlay ids with no cached
+    transcript (never applied), unmatched = overlay ids not in this day's videos.
+    """
+    by_id = {v.get("id"): v for v in videos}
+    applied, refused = [], []
+    for vid, entry in overlay.items():
+        video = by_id.get(vid)
+        if video is None:
+            continue
+        if vid not in cached_ids:
+            refused.append(vid)
+            continue
+        missing = [k for k in OVERLAY_FIELDS if not entry.get(k)]
+        if missing:
+            # A partial entry would blank the source digest while stamping it transcript-derived.
+            raise ValueError(f"overlay {vid}: missing or empty {missing}")
+        kp = entry["key_points"]
+        if not (isinstance(kp, list) and all(isinstance(k, str) and k.strip() for k in kp)):
+            raise ValueError(f"overlay {vid}: key_points must be a list of non-empty strings")
+        video["digest"] = {k: entry[k] for k in OVERLAY_FIELDS}
+        video["digest_source"] = "transcript"
+        if entry.get("quality_flag"):
+            video["quality_flag"] = entry["quality_flag"]
+        applied.append(vid)
+    unmatched = [vid for vid in overlay if vid not in by_id]
+    return applied, refused, unmatched
+
+
+def declare_catchup_source(videos, cached_ids):
+    """Tag a digest that no transcript backs with where it DID come from.
+
+    A video with no cached transcript and no declared digest_source carries only the
+    catch-up markdown's own takeaway. Without a declared source INV2 reads that as a
+    transcript claim with nothing behind it (measured 2026-10-08: cMvi1GS9R3E on 08-16).
+    Returns the ids tagged.
+    """
+    tagged = []
+    for video in videos:
+        if video.get("digest_source") or video.get("id") in cached_ids:
+            continue
+        video["digest_source"] = "catchup-markdown"
+        tagged.append(video.get("id"))
+    return tagged
+
+
 # ---------------------------------------------------------------------------
 # shared field parsing ('Core Takeaway:' / 'Key Points:' / ... blocks)
 # ---------------------------------------------------------------------------
@@ -148,6 +228,7 @@ def make_video(vid, title, channel, summary, digest, harvest=None, extra=None):
         "channel": channel or "",
         "url": f"https://youtu.be/{vid}" if vid and len(vid) == 11 else "",
         "summary": summary or "",
+        "chapters": [],  # schema: [] when the video has none (a digest carries no chapter markers)
         "digest": {
             "core_takeaway": digest.get("core_takeaway", ""),
             "key_points": digest.get("key_points", []),
@@ -198,6 +279,16 @@ def theme_sections(md):
     return [(parts[i].strip(), parts[i + 1]) for i in range(1, len(parts) - 1, 2)]
 
 
+def make_topic(name, entries):
+    """Schema-exact topic (comparison-schema.md): video_coverage is the sorted unique
+    session video ids, consensus a real enum. A catch-up digest is one source's
+    read per video, so there is nothing to divide - 'agreement'. Drift: was
+    len(entries) (an int) and "" at four sites, failing validate_comparison."""
+    return {"name": name,
+            "video_coverage": sorted({e["video_id"] for e in entries}),
+            "consensus": "agreement", "entries": entries}
+
+
 # ---------------------------------------------------------------------------
 # per-day parsers
 # ---------------------------------------------------------------------------
@@ -225,10 +316,9 @@ def parse_2026_08_16(md, titles):
             if extra["id_status"] == "unresolved":
                 video["url"] = search_url(title)
             videos.append(video)
-            entries.append({"video_id": vid, "timestamp": "", "quote": tail})
+            entries.append({"video_id": vid, "timestamp": 0, "quote": tail})
         if entries:
-            topics.append({"name": name, "video_coverage": len(entries),
-                           "consensus": "", "entries": entries})
+            topics.append(make_topic(name, entries))
     return videos, topics
 
 
@@ -261,10 +351,9 @@ def parse_2026_08_20(md, titles):
                 seen.add(vid)
                 videos.append(make_video(vid, titles.get(vid, title), "", summary,
                                          {"core_takeaway": takeaway}, extra=extra))
-            entries.append({"video_id": vid, "timestamp": "", "quote": takeaway})
+            entries.append({"video_id": vid, "timestamp": 0, "quote": takeaway})
         if entries:
-            topics.append({"name": name, "video_coverage": len(entries),
-                           "consensus": "", "entries": entries})
+            topics.append(make_topic(name, entries))
     return videos, topics
 
 
@@ -321,15 +410,13 @@ def parse_2026_08_25(md, titles):
     if videos:
         deep = [v for v in videos if v.get("digest_source") != "description"]
         if deep:
-            topics.append({"name": "Deep transcript digests", "video_coverage": len(deep),
-                           "consensus": "", "entries": [
-                               {"video_id": v["id"], "timestamp": "",
-                                "quote": v["digest"]["core_takeaway"]} for v in deep]})
+            topics.append(make_topic("Deep transcript digests", [
+                               {"video_id": v["id"], "timestamp": 0,
+                                "quote": v["digest"]["core_takeaway"]} for v in deep]))
         if quick:
-            topics.append({"name": "Roundups & quick-hits (description-based)",
-                           "video_coverage": len(quick), "consensus": "", "entries": [
-                               {"video_id": v["id"], "timestamp": "",
-                                "quote": v["digest"]["core_takeaway"]} for v in quick]})
+            topics.append(make_topic("Roundups & quick-hits (description-based)", [
+                               {"video_id": v["id"], "timestamp": 0,
+                                "quote": v["digest"]["core_takeaway"]} for v in quick]))
     return videos, topics
 
 
@@ -364,6 +451,12 @@ def build_analysis(day, titles, cached_ids):
     if not videos:
         raise ValueError(f"no videos parsed out of {catchup_path(day).name}")
 
+    applied, refused, unmatched = apply_digest_overlay(videos, load_digest_overlay(day), cached_ids)
+    if refused or unmatched:
+        print(f"[backfill] {day}: overlay refused (no cached transcript) {refused} "
+              f"| unmatched ids {unmatched}")
+    declare_catchup_source(videos, cached_ids)
+
     resolved = [v for v in videos if v.get("id_status") != "unresolved"]
     unresolved = len(videos) - len(resolved)
     with_transcript = sum(1 for v in resolved if v["id"] in cached_ids)
@@ -371,6 +464,9 @@ def build_analysis(day, titles, cached_ids):
     provenance = (f"Backfilled offline from {catchup_path(day).name} on cached data only "
                   f"(no re-fetch). {len(videos)} videos; {len(resolved)} with recovered "
                   f"YouTube ids, {with_transcript} with a cached transcript.")
+    if applied:
+        provenance += (f" {len(applied)} digests were written from the cached transcript "
+                       f"(digest_source='transcript').")
     if unresolved:
         provenance += (f" {unresolved} entries kept their digest but could not have their "
                        f"video id recovered offline and carry a synthetic 'unresolved-' id.")

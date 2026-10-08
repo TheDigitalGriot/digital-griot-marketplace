@@ -921,7 +921,8 @@ body.resizing{cursor:col-resize; user-select:none}
    RESTYLE, not a rewrite of behaviour: every endpoint, payload shape and
    fallback from the previous viewer is carried across verbatim —
      GET  /api/sessions             GET  /api/session/<id>
-     POST /api/screenshot           POST /api/chat        (streamed)
+     POST /api/screenshot (explicit user action only)  POST /api/chat (streamed)
+     GET  /api/frames-index         (frames already on disk; read once on open)
      GET  /api/settings             POST /api/settings
      GET  /api/videos               POST /api/sessions/compose
      POST /api/session/<id>/add-videos
@@ -1296,7 +1297,7 @@ body.resizing{cursor:col-resize; user-select:none}
              channel thumbnail would show the cover art dressed up as a frame —
              the spec forbids it precisely because it reads as captured data
              when nothing was captured. No frame => an honest empty slot. */
-          var frame = thumbSrc(e.screenshot_base64 || e.screenshot);
+          var frame = thumbSrc(e.screenshot_base64 || e.screenshot) || localFrame(e.video_id, ts);
           return '<div class="entry">' +
             '<div class="et' + (frame ? '' : ' et-empty') + '"' +
             (frame ? ' style="background-image:url(' + frame + ')"' : '') + '>' +
@@ -1632,9 +1633,11 @@ body.resizing{cursor:col-resize; user-select:none}
     line.classList.add('busy');
     fetch('/api/screenshot', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ video_id: v.id, timestamp: seconds })
+      /* the ONE place a live grab may be asked for: an explicit click in Edit mode. The server
+         still refuses it unless the operator set CINOPSIS_VIEWER_LIVE_FRAMES=1. */
+      body: JSON.stringify({ video_id: v.id, timestamp: seconds, live: true, session: currentSessionId })
     }).then(function (r) { return r.json(); }).then(function (res) {
-      if (!res || !res.screenshot_base64) throw new Error((res && res.error) || 'capture failed');
+      if (!res || !res.screenshot_base64) throw new Error((res && (res.hint || res.error)) || 'capture failed');
       var a = analysisOf(currentSessionData);
       if (!a.key_moments) a.key_moments = [];
       a.key_moments.push({
@@ -1656,7 +1659,7 @@ body.resizing{cursor:col-resize; user-select:none}
 
   function kmCard(m, i, v) {
     var c = hue(i);
-    var frame = thumbSrc(m.screenshot_base64 || m.screenshot);
+    var frame = thumbSrc(m.screenshot_base64 || m.screenshot) || localFrame(m.video_id, m.timestamp);
     var body = frame
       ? '<div class="km-frame" style="background-image:url(' + frame + ')">' +
         '<div class="tint" style="background:' + c + '"></div><span class="ts">' + fmtTs(m.timestamp) + '</span></div>'
@@ -1678,72 +1681,35 @@ body.resizing{cursor:col-resize; user-select:none}
     return (isFinite(n) && n >= 0) ? Math.floor(n) : null;
   }
 
-  /* Background frame backfill — same job set as before, but bounded:
-     invalid timestamps are dropped, and the batch trips a breaker after 3
-     consecutive failures rather than hammering a capture path that is down
-     (yt-dlp/ffmpeg can be IP-blocked; that is a backend state, not a reason
-     to fire dozens of doomed requests). */
-  var CAPTURE_FAIL_LIMIT = 3;
+  /* Frames already on disk, keyed '<video_id>_<int seconds>' -> /frames URL.
+     cc5-batch2 leak 1: opening a session used to POST /api/screenshot for every
+     key moment and topic entry, and every cache miss fell through to a LIVE
+     stream-URL grab. Opening the viewer now makes no capture request at all:
+     it reads one disk-only index of the frames the harvest already wrote and
+     shows those. A missing frame is an honest empty slot; capturing one is an
+     explicit Edit-mode click (captureFrame), or capture_frames.py --engine local. */
+  var localFrames = Object.create(null);
+  function localFrame(videoId, ts) {
+    var t = validTs(ts);
+    if (!videoId || t === null) return '';
+    return localFrames[videoId + '_' + t] || '';
+  }
   function autoFetchScreenshots() {
-    var d = currentSessionData; if (!d) return;
-    var a = analysisOf(d), jobs = [], seen = Object.create(null);
-    (a.key_moments || []).forEach(function (m) {
-      if (m.screenshot_base64 || m.screenshot || !m.video_id) return;
-      var ts = validTs(m.timestamp); if (ts === null) return;
-      var k = m.video_id + '_' + ts;
-      if (seen[k]) return; seen[k] = 1; jobs.push({ o: m, id: m.video_id, ts: ts });
-    });
-    (Array.isArray(a.workflow_steps) ? a.workflow_steps : []).forEach(function (st) {
-      if (!st || st.frame_ref || !st.video_id) return;
-      var ts = validTs(st.t_start); if (ts === null) return;
-      var k = st.video_id + '_' + ts;
-      if (seen[k]) return; seen[k] = 1; jobs.push({ o: st, id: st.video_id, ts: ts, step: true });
-    });
-    (a.topics || []).forEach(function (t) {
-      (t.entries || t.timestamps || []).forEach(function (e) {
-        if (e.screenshot_base64 || e.screenshot || !e.video_id) return;
-        var ts = validTs(e.timestamp != null ? e.timestamp : e.start);
-        if (ts === null) return;
-        var k = e.video_id + '_' + ts;
-        if (seen[k]) return; seen[k] = 1; jobs.push({ o: e, id: e.video_id, ts: ts });
+    var d = currentSessionData; if (!d || currentSessionId === 'static') return;
+    var ids = (d.videos || []).map(function (v) { return v && v.id; }).filter(Boolean);
+    if (!ids.length) return;
+    var forSession = currentSessionId;
+    api('/api/frames-index?video_ids=' + ids.map(encodeURIComponent).join(',')).then(function (idx) {
+      if (forSession !== currentSessionId || !idx) return;
+      var added = 0;
+      Object.keys(idx).forEach(function (vid) {
+        (idx[vid] || []).forEach(function (t) {
+          var k = vid + '_' + t;
+          if (!localFrames[k]) { localFrames[k] = frameUrl('frames/' + k + '.png'); added++; }
+        });
       });
-    });
-    if (!jobs.length) return;
-    var idx = 0, active = 0, changed = false, fails = 0, stopped = false, ramped = false;
-    function next() {
-      if (stopped || idx >= jobs.length) {
-        if (!active && changed) renderActive();
-        return;
-      }
-      if (fails >= CAPTURE_FAIL_LIMIT) {       /* breaker: capture is down */
-        stopped = true;
-        if (!active && changed) renderActive();
-        return;
-      }
-      var job = jobs[idx++]; active++;
-      fetch('/api/screenshot', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ video_id: job.id, timestamp: job.ts })
-      }).then(function (r) {
-        if (!r.ok) throw new Error('capture ' + r.status);
-        return r.json();
-      }).then(function (res) {
-        if (res && res.screenshot_base64) {
-          /* a step records its frame by PATH (capture_frame's <id>_<t>.png, served by /frames) */
-          if (job.step) job.o.frame_ref = 'frames/' + job.id + '_' + job.ts + '.png';
-          else job.o.screenshot_base64 = res.screenshot_base64;
-          changed = true; fails = 0;
-        } else { fails++; }
-      }).catch(function () { fails++; }).then(function () {
-        active--;
-        /* probe with ONE request first; only widen to 3 concurrent once the
-           capture path has proven healthy. If it is down we stop after a
-           single failed probe instead of three parallel ones. */
-        if (!ramped && changed) { ramped = true; next(); next(); }
-        next();
-      });
-    }
-    next();
+      if (added) renderActive();
+    }).catch(function () { /* no index -> empty slots, never a capture */ });
   }
 
   /* ═══ LIBRARY MODAL ═══════════════════════════════════════════════════ */

@@ -124,40 +124,87 @@ def fill_phases(videos, analysis):
                               f"phase {step['phase']!r}, chapter at t_start is {covering!r}")
     return mismatches
 
+# cc5-batch2 leak 2 (drift 235): every yt-dlp call made while assembling a session goes through
+# ratelimit on the named metadata door, so a cooling door skips the network instead of hammering it.
+METADATA_DOOR = "metadata"
+# HARD ANTI-HAMMER CAP, mirroring fetch_transcripts: at most 5 new ids per compare_videos call.
+MAX_IDS_PER_CALL = 5
+
+
+def _metadata_gate(video_id, what):
+    """True when the metadata door lets this call through; False (and says so) when it is closed."""
+    try:
+        import ratelimit
+    except ImportError:
+        return True
+    try:
+        ratelimit.check_gate(what, door=METADATA_DOOR)
+        return True
+    except ratelimit.RateLimited as e:
+        print(f"  [gate] {what} for {video_id} skipped, {METADATA_DOOR} door closed: {e}", flush=True)
+        return False
+
+
+def _metadata_outcome(ok, detail=""):
+    try:
+        import ratelimit
+    except ImportError:
+        return
+    ratelimit.record_outcome(ok, (detail or "")[:200], door=METADATA_DOOR)
+
+
+def _unknown_metadata(video_id):
+    """The documented failure shape (verify_invariants reads it): title Unknown, chapters []."""
+    return {
+        "id": video_id,
+        "title": "Unknown",
+        "channel": "Unknown",
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "duration": "",
+        "upload_date": "",
+        "view_count": 0,
+        "chapters": [],
+    }
+
+
 def fetch_video_metadata(video_id):
-    """Fetch full metadata for a single video using yt-dlp."""
+    """Fetch full metadata for a single video using yt-dlp, behind the metadata door."""
+    if not _metadata_gate(video_id, "metadata"):
+        print(f"  Error fetching metadata for {video_id}: rate-limited, title left Unknown", flush=True)
+        return _unknown_metadata(video_id)
     cmd = [find_ytdlp(), "--dump-json", "--no-download", f"https://www.youtube.com/watch?v={video_id}"]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=get_env(), stdin=subprocess.DEVNULL)
-        info = json.loads(result.stdout)
-        return {
-            "id": video_id,
-            "title": info.get("title", "Unknown"),
-            "channel": info.get("channel", "Unknown"),
-            "url": f"https://www.youtube.com/watch?v={video_id}",
-            "duration": info.get("duration_string", ""),
-            "upload_date": info.get("upload_date", ""),
-            "view_count": info.get("view_count", 0),
-            "chapters": extract_chapters(info),
-        }
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError) as e:
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        _metadata_outcome(False, str(e))
         print(f"  Error fetching metadata for {video_id}: {e}")
-        return {
-            "id": video_id,
-            "title": "Unknown",
-            "channel": "Unknown",
-            "url": f"https://www.youtube.com/watch?v={video_id}",
-            "duration": "",
-            "upload_date": "",
-            "view_count": 0,
-            "chapters": [],
-        }
+        return _unknown_metadata(video_id)
+    try:
+        info = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        _metadata_outcome(False, result.stderr or str(e))
+        err = next((ln for ln in (result.stderr or "").splitlines() if ln.startswith("ERROR")), str(e))
+        print(f"  Error fetching metadata for {video_id}: {err}")
+        return _unknown_metadata(video_id)
+    _metadata_outcome(True)
+    return {
+        "id": video_id,
+        "title": info.get("title", "Unknown"),
+        "channel": info.get("channel", "Unknown"),
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "duration": info.get("duration_string", ""),
+        "upload_date": info.get("upload_date", ""),
+        "view_count": info.get("view_count", 0),
+        "chapters": extract_chapters(info),
+    }
 
 
 def fetch_thumbnail_base64(video_id):
-    """Download thumbnail and return as base64 string."""
+    """Download thumbnail and return as base64 string, behind the metadata door (None if closed)."""
     import base64
     import tempfile
+    if not _metadata_gate(video_id, "thumbnail"):
+        return None
     with tempfile.TemporaryDirectory() as tmpdir:
         cmd = [
             find_ytdlp(), "--write-thumbnail", "--skip-download",
@@ -165,7 +212,13 @@ def fetch_thumbnail_base64(video_id):
             "-o", os.path.join(tmpdir, "thumb"),
             f"https://www.youtube.com/watch?v={video_id}",
         ]
-        subprocess.run(cmd, capture_output=True, timeout=30, env=get_env(), stdin=subprocess.DEVNULL)
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=30, env=get_env(), stdin=subprocess.DEVNULL)
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            _metadata_outcome(False, str(e))
+            raise
+        stderr = result.stderr.decode("utf-8", "replace") if isinstance(result.stderr, bytes) else (result.stderr or "")
+        _metadata_outcome(result.returncode == 0, stderr)
         for f in Path(tmpdir).glob("thumb*.png"):
             return base64.b64encode(f.read_bytes()).decode("utf-8")
     return None
@@ -525,6 +578,10 @@ def main():
         if args.chunk and len(video_ids) > args.chunk:
             print(f"[chunk] limiting to first {args.chunk} of {len(video_ids)} urls (resume the rest with --add-to)", flush=True)
             video_ids = video_ids[:args.chunk]
+        if len(video_ids) > MAX_IDS_PER_CALL:
+            print(f"[cap] {len(video_ids)} urls clamped to {MAX_IDS_PER_CALL} this call (hard anti-hammer cap; "
+                  f"resume the rest with --add-to): {', '.join(video_ids[MAX_IDS_PER_CALL:])}", flush=True)
+            video_ids = video_ids[:MAX_IDS_PER_CALL]
         print(f"Fetching {len(video_ids)} new video(s)...\n", flush=True)
         failed = []
         for vid in video_ids:
