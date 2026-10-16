@@ -9,6 +9,13 @@ Browse subscribed YouTube channels, fetch transcripts, and generate Markdown sum
 
 **Plugin root:** `${CLAUDE_PLUGIN_ROOT}` | **Data:** `${CLAUDE_PLUGIN_DATA}`
 
+**Resources - cloud / device resolution (plugin variant).** Read bundled docs via
+`${CLAUDE_PLUGIN_ROOT}/skills/cinopsis/references/<file>` (they ship with the plugin, so they resolve
+in the cloud too). Run bundled scripts (`scripts/*.py`) device-side only - Cowork has no Bash tool, so
+route them through the Windows-MCP PowerShell bridge or `claude.exe -p`; never assume a relative
+`scripts/...` path executes in the cloud. If the bridge is down, say so and fall back to the inline
+instructions here.
+
 > **Stuck Protocol (device/cloud recovery — non-negotiable):** if any device/cloud tool returns empty/`[]`/"not connected"/"no DOM"/403 or fails first-call, do NOT report it blocked. Retry 2-3x -> switch surface (built-in pane <-> Claude-in-Chrome; native Windows PowerShell when the sandbox has no route; the Gmail *browser* when the *connector* is the wrong account) -> replay the logs (session_info -> last successful run -> copy its exact tool sequence) -> then ask Gavin ONE direct question. Gavin's word about his own machine is GROUND TRUTH. "Blocked" without those steps is a DEFINED ERROR; a forced skip = INCOMPLETE run. Full ladder: this plugin's CLAUDE.md "Stuck Protocol" section.
 ## Quick Commands (token-efficient — bypass skill loading for known operations)
 
@@ -49,6 +56,8 @@ python scripts/get_transcript.py --video-id VIDEO_ID
 - Transcripts: `${CLAUDE_PLUGIN_DATA}/transcript_VIDEO_ID.txt`
 - Digest: `${CLAUDE_PLUGIN_DATA}/output/ai_digest_YYYYMMDD.md`
 - Schema ref: `${CLAUDE_PLUGIN_ROOT}/skills/cinopsis/references/comparison-schema.md`
+- Fan-out contracts: `references/analysis-contract.md` (per-video analysis agents) and
+  `references/readback-contract.md` (frame read-back; applied by `scripts/apply_readback.py --session`)
 
 **Inject-analysis method** (`build_session_from_analysis.py`): when transcripts were fetched + analyzed *elsewhere* — device-side while the cloud has no YouTube egress, by subagents, or any external pipeline — feed a finished-analysis JSON (same shape as `comparison-schema.md`) to build a real session through the plugin's own `save_session`/persist, then launch the viewer. Decouples analysis from fetching; `--thumbnails` backfills thumbnails (non-fatal).
 
@@ -85,7 +94,7 @@ Both agents fill `comparison_data.json` before launching the viewer. **The viewe
 - **`analysis.unified_summary`** — synthesis paragraph (cross-video or single overview)
 - **`analysis.topics`** — name, entries (video_id, timestamp, quote), video_coverage, consensus
 - **`analysis.disagreements`** — where creators differ, both perspectives (empty array for single video)
-- **`analysis.key_moments`** — 3-5 per video: video_id, timestamp, label, description
+- **`analysis.key_moments`** — UNCAPPED, the count follows the content; each carries WHY it mattered (`description`); never merged with `workflow_steps` (`skills/cinopsis/references/comparison-schema.md` `key_moments`): video_id, timestamp, label, description
 - **`stats`** — common_topics, disagreements, key_moments counts
 
 **IMPORTANT:** Agents must complete ALL fields in a single pass and launch the viewer at the end. Do not return to the user between steps.
@@ -189,7 +198,7 @@ keyframes|scene --video-id ID` (MCP `watch_frames`) uses its frame engine.
 
 ### Batch / many videos - never all-N at once
 
-**Playlists enforce this structurally:** `fetch_playlist.py` surfaces at most `--max-new N` (default 12, env `CINOPSIS_MAX_NEW_PER_RUN`) net-new per run and drains a big backlog a bounded batch at a time - the channel path's `--playlist-end 10`, applied to playlists. Never lift the cap to clear a backlog in one shot (that is the IP-block cause); let it drain over days, or run it on a daily schedule.
+**Playlists enforce this structurally:** `fetch_playlist.py` surfaces at most `--max-new N` (default 6, env `CINOPSIS_MAX_NEW_PER_RUN`; MCP `fetch_playlist(max_new=N)`) net-new per run and drains a big backlog a bounded batch at a time - the channel path's `--playlist-end 10`, applied to playlists. Never lift the cap to clear a backlog in one shot (that is the IP-block cause); let it drain over days, or run it on a daily schedule. `--all` (MCP `include_all`) is the un-paced escape that bypasses the cap - never use it to clear a backlog.
 
 Fetch **one/-few IDs per call** with `fetch_transcripts.py --ids ... --chunk N` (each cheap,
 fits the ~60s device-bridge cap), then assemble once with `compare_videos.py --urls ... --from-cache`.

@@ -1,12 +1,17 @@
 ---
 description: Surface newly-added videos from a YouTube playlist (id-based seen-diff)
-argument-hint: <url|list_id> [--name NAME] [--playlist-end N] [--all] [--seed] [--cookies PATH]
+argument-hint: <url|list_id> [--name NAME] [--max-new N] [--playlist-end N] [--all] [--seed] [--cookies PATH]
 allowed-tools: Bash, Read
 model: haiku
 ---
 List new videos from a YouTube playlist with these options: $ARGUMENTS
 
 cd ${CLAUDE_PLUGIN_ROOT} && python scripts/fetch_playlist.py $ARGUMENTS
+
+**Pacing:** at most `--max-new N` net-new videos surface per run (default 6; env
+`CINOPSIS_MAX_NEW_PER_RUN` overrides). The rest stay unseen and drain on later runs.
+`--all` is the un-paced escape - it bypasses the cap and surfaces the whole backlog at once;
+do not use it to clear a backlog.
 
 Display results as a clean numbered list: **title** | url. Then echo the two handoff
 commands the script prints (fetch_transcripts.py, then compare_videos.py --from-cache).

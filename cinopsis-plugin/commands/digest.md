@@ -24,7 +24,7 @@ cd ${CLAUDE_PLUGIN_ROOT} first, then follow these steps:
    - `videos[0].digest` — `{"core_takeaway": "2-3 sentences", "key_points": ["specific bullet", "..."], "why_it_matters": "..."}`
    - `analysis.unified_summary` — single-video overview paragraph
    - `analysis.topics` — array of `{name, entries: [{video_id, timestamp (int seconds), quote}], video_coverage: [video_id], consensus: "agreement"}`
-   - `analysis.key_moments` — 3-5 items: `{video_id, timestamp, label, description}`
+   - `analysis.key_moments` — UNCAPPED, the count follows the content; each carries WHY it mattered (`description`); never merged with `workflow_steps` (`skills/cinopsis/references/comparison-schema.md`): `{video_id, timestamp, label, description}`
    - `stats` — `{common_topics: N, disagreements: 0, key_moments: N}`
    Update session_progress.json: `"status": "analysis_complete"`.
 

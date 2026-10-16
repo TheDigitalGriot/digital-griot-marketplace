@@ -43,12 +43,18 @@ Read every file in `data/sessions/SESSION_DIR/_transcripts/`. Load all transcrip
 ### Step 3: Fill comparison_data.json with complete analysis
 See full field reference: `${CLAUDE_PLUGIN_ROOT}/skills/cinopsis/references/comparison-schema.md`
 
+Fanning a large batch out to fresh-context agents? Hand each one
+`${CLAUDE_PLUGIN_ROOT}/skills/cinopsis/references/analysis-contract.md` (one video per agent). Steps stay
+`spoken`/`inferred` here; only the frame read-back
+(`${CLAUDE_PLUGIN_ROOT}/skills/cinopsis/references/readback-contract.md`, applied by
+`python scripts/apply_readback.py --session SESSION_ID`) may upgrade a step to `shown`.
+
 Required fields (every viewer tab depends on these):
 - **Per-video `summary` and `digest`** — on each video object
 - **`analysis.unified_summary`** — cross-video synthesis paragraph
 - **`analysis.topics`** — name, entries (video_id, timestamp, quote), video_coverage, consensus
 - **`analysis.disagreements`** — where creators differ, both perspectives stated neutrally
-- **`analysis.key_moments`** — 3-5 per video with timestamp, label, description
+- **`analysis.key_moments`** — UNCAPPED, the count follows the content; each carries WHY it mattered (`description`); never merged with `workflow_steps` (`skills/cinopsis/references/comparison-schema.md`): timestamp, label, description
 - **`stats`** — common_topics, disagreements, key_moments counts
 
 Update session_progress.json: `"status": "analysis_complete"`.

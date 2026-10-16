@@ -27,7 +27,7 @@ cd ${CLAUDE_PLUGIN_ROOT} first, then follow these steps:
    - `analysis.unified_summary` — cross-video synthesis paragraph
    - `analysis.topics` — `{name, entries: [{video_id, timestamp, quote}], video_coverage: [ids], consensus: "agreement|divided|skeptical"}`
    - `analysis.disagreements` — `{topic, positions: [{video_id, position}]}` — state both sides neutrally
-   - `analysis.key_moments` — 3-5 per video: `{video_id, timestamp, label, description}`
+   - `analysis.key_moments` — UNCAPPED, the count follows the content; each carries WHY it mattered (`description`); never merged with `workflow_steps` (`skills/cinopsis/references/comparison-schema.md`): `{video_id, timestamp, label, description}`
    - `stats` — `{common_topics: N, disagreements: N, key_moments: N}`
    Update session_progress.json: `"status": "analysis_complete"`.
 

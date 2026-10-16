@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cinopsis invariant gate -- compute the three store invariants over real data.
+"""Cinopsis invariant gate -- compute the four store invariants over real data.
 
 Exits NONZERO if any invariant is violated, so this can sit on a ceremony gate.
 Python 3, standard library only (plus the repo-local _utils for the data dirs).
@@ -16,15 +16,20 @@ WHAT IT CHECKS
                               index.json entry AND a persisted session all exist
                               -- in BOTH directions (no indexed-but-missing, no
                               on-disk-but-unindexed).
+  INV4 vault-self-sufficient  every video in a CANONICAL (vault) session has its
+                              transcript_<id> in the vault's OWN data dir, or
+                              declares a non-transcript digest source. No
+                              pooling: persist_session now copies the media
+                              with the session (N2, 2026-10-15).
 
 WHERE THE ARTIFACTS LIVE (this is why resolution is cross-dir)
 --------------------------------------------------------------
 There are two data dirs: the working DATA_DIR (<repo>/data) and the canonical
 one the viewer reads (_utils.canonical_data_dir()). persist_session() copytree's
-ONLY the session dir -- transcript_<id>.*, description_<id>.txt and videos.json
-are NEVER promoted alongside it. A canonical session is therefore backed by
-caches that live in the working dir, so every artifact lookup here unions ALL
-known data dirs. Checking "next to the session" would report a false violation
+only the session dir; since N2 (2026-10-15) it also copies transcript_<id>.*
+and description_<id>.txt (videos.json is still never promoted). INV1-3 keep
+unioning ALL known data dirs so a pre-N2 promotion is judged fairly; INV4 is
+the one check that refuses the pool. Checking "next to the session" would report a false violation
 for every promoted session in the library.
 
 INTERPRETATION NOTES (ambiguities in the stage contract, resolved to the
@@ -215,7 +220,7 @@ def declares_non_transcript_source(video):
 
 
 # ---------------------------------------------------------------------------
-# the three invariants
+# the four invariants
 # ---------------------------------------------------------------------------
 def check_ingest_iff(sessions, artifacts):
     """INV1 -- an ingested video has transcript AND description AND manifest entry."""
@@ -326,11 +331,42 @@ def check_comparison_served_iff(stores, canonical_dirs):
     return violations, f"{checked} comparisons across {len(stores)} stores"
 
 
+def check_vault_self_sufficient(stores):
+    """INV4 -- the vault holds the videos, not just the sessions (N2, 2026-10-15).
+
+    Every video in a CANONICAL store's session has transcript_<id>.json/.txt in
+    THAT store's own data dir, or declares a non-transcript digest source. No
+    pooling across dirs and no inline-transcript credit: this is the one check
+    that asks whether the vault survives without the repo beside it.
+    """
+    violations, checked, stores_seen = [], 0, 0
+    for store in stores:
+        if not store.canonical or not store.sessions_dir.exists():
+            continue
+        stores_seen += 1
+        own = Artifacts([store.data_dir])
+        for session in store.sessions:
+            for video in session.videos:
+                if not isinstance(video, dict):
+                    continue
+                checked += 1
+                if declares_non_transcript_source(video):
+                    continue
+                vid = video.get("id")
+                if vid and vid in own.transcripts:
+                    continue
+                violations.append(
+                    f"{_p(session.label)}: video "
+                    f"{_p(vid or video.get('title') or '<no id>')} has no transcript "
+                    f"in the vault and declares no non-transcript source")
+    return violations, f"{checked} vault videos across {stores_seen} canonical stores"
+
+
 # ---------------------------------------------------------------------------
 # report
 # ---------------------------------------------------------------------------
 def run(data_dirs, verbose=False, out=None):
-    """Compute all three invariants. Returns 0 when every invariant holds."""
+    """Compute all four invariants. Returns 0 when every invariant holds."""
     out = out or sys.stdout
     dirs = resolve_data_dirs(data_dirs)
     if not dirs:
@@ -366,6 +402,7 @@ def run(data_dirs, verbose=False, out=None):
         ("INV1 ingest-iff", check_ingest_iff(sessions, artifacts)),
         ("INV2 digest-real", check_digest_real(sessions, artifacts)),
         ("INV3 comparison-served-iff", check_comparison_served_iff(stores, canonical_dirs)),
+        ("INV4 vault-self-sufficient", check_vault_self_sufficient(stores)),
     ]
 
     failed = 0
@@ -384,9 +421,9 @@ def run(data_dirs, verbose=False, out=None):
 
     print("", file=out)
     if failed:
-        print(f"RESULT: FAIL -- {failed} of 3 invariants violated", file=out)
+        print(f"RESULT: FAIL -- {failed} of {len(results)} invariants violated", file=out)
         return 1
-    print("RESULT: PASS -- all 3 invariants hold", file=out)
+    print(f"RESULT: PASS -- all {len(results)} invariants hold", file=out)
     return 0
 
 
@@ -394,7 +431,7 @@ def run(data_dirs, verbose=False, out=None):
 # self-test: prove the gate actually fires (an unfalsifiable gate is paint)
 # ---------------------------------------------------------------------------
 def _write_synthetic_store(root):
-    """A store that violates all three invariants, on purpose."""
+    """A store that violates all four invariants, on purpose."""
     sessions = root / "sessions"
     good = sessions / "2026-01-01_good"
     bad = sessions / "2026-01-02_bad"
@@ -441,7 +478,7 @@ def _write_synthetic_store(root):
 
 
 def self_test():
-    """Build a store that breaks all three invariants; assert the gate exits nonzero."""
+    """Build a store that breaks all four invariants; assert the gate exits nonzero."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "store"
         root.mkdir()
@@ -451,7 +488,7 @@ def self_test():
         code = run([root], verbose=True)
         print("-" * 60)
         if code == 0:
-            print("SELF-TEST FAIL: the gate passed a store built to violate all three.")
+            print("SELF-TEST FAIL: the gate passed a store built to violate all four.")
             return 1
         print(f"SELF-TEST PASS: gate exited {code} on the synthetic violation.")
         return 0
@@ -459,7 +496,7 @@ def self_test():
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="Verify the three Cinopsis store invariants; nonzero exit on violation.")
+        description="Verify the four Cinopsis store invariants; nonzero exit on violation.")
     ap.add_argument("--data-dir", action="append", default=None,
                     help="Data dir to check (repeatable). Default: canonical + working.")
     ap.add_argument("--verbose", action="store_true", help="List every violation.")

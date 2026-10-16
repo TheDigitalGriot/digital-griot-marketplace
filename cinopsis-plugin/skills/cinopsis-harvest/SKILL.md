@@ -12,6 +12,13 @@ authoritative record of the control. A harvest without frames is half a harvest.
 
 **Plugin root:** `${CLAUDE_PLUGIN_ROOT}` | **Data:** `${CLAUDE_PLUGIN_DATA}`
 
+**Resources - cloud / device resolution (plugin variant).** Read bundled docs via
+`${CLAUDE_PLUGIN_ROOT}/skills/cinopsis/references/<file>` (they ship with the plugin, so they resolve
+in the cloud too). Run bundled scripts (`scripts/*.py`) device-side only - Cowork has no Bash tool, so
+route them through the Windows-MCP PowerShell bridge or `claude.exe -p`; never assume a relative
+`scripts/...` path executes in the cloud. If the bridge is down, say so and fall back to the inline
+instructions here.
+
 > **Stuck Protocol (device/cloud recovery - non-negotiable):** if any device/cloud tool returns empty/`[]`/"not connected"/"no DOM"/403 or fails first-call, do NOT report it blocked. Retry 2-3x -> switch surface (built-in pane <-> Claude-in-Chrome; native Windows PowerShell when the sandbox has no route) -> replay the logs (session_info -> last successful run -> copy its exact tool sequence) -> then ask Gavin ONE direct question. Gavin's word about his own machine is GROUND TRUTH. "Blocked" without those steps is a DEFINED ERROR; a forced skip = INCOMPLETE run. Full ladder: this plugin's CLAUDE.md "Stuck Protocol" section.
 >
 > **A cooling frames gate is not a Stuck Protocol case.** It is a known, scheduled
@@ -25,10 +32,17 @@ already separates its two notions. This skill **consumes them by their real fiel
 and invents nothing**. Full map with file:line: `.prism/shared/plans/cinopsis-harvest-MAP.md`.
 The authority is `skills/cinopsis/references/comparison-schema.md`.
 
+**Fan-out contracts.** When a batch hands videos to fresh-context agents, the per-video analysis
+agents follow `skills/cinopsis/references/analysis-contract.md`, and the frame read-back follows
+`skills/cinopsis/references/readback-contract.md` (contact sheets from `scripts/readback_sheets.py`).
+Its patches are applied ONLY by `python scripts/apply_readback.py --session <session> --readback-dir <dir>`,
+which denies on the structured `contradicts` field and refuses a shown step that does not carry one.
+Never hand-merge a read-back into the session.
+
 | Notion | Lives at | Fields this skill reads |
 |---|---|---|
 | **Workflow step** - the ordered procedure | `analysis.workflow_steps[]` | `video_id`, `index`, `t_start`, `t_end`, `phase`, `ui_kind`, `ui_target`, `ui_options`, `frame_ref`, `confidence` |
-| **Key moment** - what mattered | `analysis.key_moments[]` (3-5 per video) | `video_id`, `timestamp`, `label`, `description` |
+| **Key moment** - what mattered | `analysis.key_moments[]` (UNCAPPED, the count follows the content; each carries WHY it mattered (`description`); never merged with `workflow_steps` (`skills/cinopsis/references/comparison-schema.md`)) | `video_id`, `timestamp`, `label`, `description` |
 | **Phase** | `videos[].chapters[]` | `title`, `start_time`, `end_time` |
 
 - `key_moments` and `workflow_steps` are **never merged**. A moment is significance, a
@@ -87,7 +101,7 @@ Run per video, in this order. Digest first: the frame timestamps come out of it.
    `frame_ref`. If no step covers the mention, add the step if it is genuinely part of
    the procedure; if it is not (an aside, a sponsor read), leave the harvest entry's
    `frame_ref` null and say "no step covers it". Never pad `key_moments` to buy a frame:
-   it breaks the 3-5 significance cap (schema :92) and the stats drift silently.
+   a key moment records significance, not a frame anchor, so padding one breaks its meaning and the stats drift silently (`skills/cinopsis/references/comparison-schema.md` `key_moments`).
 5. **Frame pass.** Run it per video, never per hand-typed timestamp (next section).
 6. **Write back.** Append the harvest entries with `frame_ref` (shape below), then the
    progress line `done <id>` to `.prism/shared/digest-progress.txt`.

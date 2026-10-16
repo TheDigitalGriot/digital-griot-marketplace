@@ -119,7 +119,8 @@ def fetch_videos(days: int = 3, keyword: str | None = None, include_all: bool = 
 @mcp.tool()
 def fetch_playlist(url: str | None = None, name: str | None = None,
                    playlist_end: int | None = None, include_all: bool = False,
-                   seed_only: bool = False, cookies: str | None = None) -> str:
+                   seed_only: bool = False, cookies: str | None = None,
+                   max_new: int | None = None) -> str:
     """Surface newly-added videos from a YouTube playlist (id-based seen-diff).
 
     Diffs the playlist's entries against a local seen manifest and returns only
@@ -131,17 +132,26 @@ def fetch_playlist(url: str | None = None, name: str | None = None,
         url: Playlist URL (playlist?list=… or watch?v=…&list=…) or a bare list id.
         name: A named playlist from data/playlists.json (used if url is omitted).
         playlist_end: Optional cap on how many entries to scan.
-        include_all: If true, ignore the manifest and return the full list.
+        include_all: If true, ignore the manifest and return the full list. WARNING: this is
+            the un-paced escape; it bypasses max_new and surfaces the whole backlog at once.
         seed_only: If true, seed the manifest from the current playlist and return
             nothing new (onboard a playlist without a retroactive fetch).
         cookies: Optional path to a cookies.txt (Netscape format) so PRIVATE/unlisted
             playlists resolve. Falls back to $CINOPSIS_COOKIES, then data/cookies.txt.
+        max_new: Surface at most N net-new videos this run (must be >= 1). Omitted, it falls
+            back to $CINOPSIS_MAX_NEW_PER_RUN, else 6 - the same default the CLI uses. The
+            rest stay unseen and drain on later runs, so a batch is never over-fed.
     """
+    if max_new is not None and (not isinstance(max_new, int) or isinstance(max_new, bool)
+                                or max_new < 1):
+        return json.dumps({"error": f"max_new must be an integer >= 1, got {max_new!r}"},
+                          ensure_ascii=False)
     with _quiet_stdout():
         try:
             result = fetch_playlist_new(
                 ref=url, name=name, playlist_end=playlist_end,
                 force_all=include_all, seed_only=seed_only, cookies=cookies,
+                max_new=max_new,
             )
         except ValueError as e:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
@@ -164,6 +174,9 @@ def fetch_playlist(url: str | None = None, name: str | None = None,
         "total_entries": result["total_entries"],
         "first_run": result["first_run"],
         "new_count": len(ids),
+        "backlog_new": result.get("backlog_new"),
+        "remaining": result.get("remaining"),
+        "cap": result.get("cap"),
         "new_ids": ids,
         "new_videos": [{"id": v["id"], "title": v["title"], "url": v["url"]} for v in result["new"]],
         "next_step": (

@@ -226,14 +226,14 @@ input{font-family:inherit}
 .vcard{border-radius:var(--r-xl); overflow:hidden; background:var(--paper-hi); border:1px solid var(--card-line); box-shadow:var(--card-soft); cursor:pointer; transition:transform .3s var(--song), box-shadow .3s var(--song); position:relative}
 .vcard:hover{transform:translateY(-3px); box-shadow:var(--card-soft-hi)}
 .thumb{aspect-ratio:16/9; position:relative; background-size:cover; background-position:center; background-color:#2a2c32; display:grid; place-items:center; overflow:hidden}
-.thumb.ig{aspect-ratio:4/5}
+.thumb.ig,.thumb.short{aspect-ratio:4/5}
 .thumb .glyph{font-family:"Sora";font-weight:700;font-size:14px;color:rgba(255,255,255,.92);text-align:center;padding:0 12px;line-height:1.25;text-shadow:0 2px 10px rgba(0,0,0,.6)}
 .thumb .play{position:absolute; width:36px;height:36px;border-radius:50%; background:var(--ember); display:grid;place-items:center; box-shadow:0 0 16px var(--ember-glow); opacity:0; transition:.2s}
 .vcard:hover .play{opacity:1}
 .thumb .play svg{width:14px;height:14px;color:#fff;margin-left:2px}
 .thumb .dur{position:absolute; bottom:7px; right:7px; font-family:"IBM Plex Mono"; font-size:10.5px; padding:2px 6px; border-radius:5px; background:rgba(0,0,0,.78); color:#fff}
 .thumb .srcbadge{position:absolute; top:7px; left:7px; font-size:10px; font-weight:600; padding:3px 7px; border-radius:6px; display:flex; align-items:center; gap:4px; color:#fff}
-.srcbadge.yt{background:rgba(255,0,51,.88)}.srcbadge.ig{background:var(--ig)}
+.srcbadge.yt{background:rgba(255,0,51,.88)}.srcbadge.ig{background:var(--ig)}.srcbadge.short{background:var(--ember)}
 .thumb .sel{position:absolute; top:7px; right:7px; width:22px; height:22px; border-radius:6px; background:rgba(0,0,0,.5); border:1.5px solid #fff; display:none; place-items:center; color:#fff}
 .vcard.pick .thumb .sel{display:grid; background:var(--ember); border-color:#fff; box-shadow:0 0 10px var(--ember-glow)}
 .vcard.pick{box-shadow:0 0 0 2px var(--ember), 0 10px 24px rgba(0,0,0,.3)}
@@ -969,10 +969,19 @@ body.resizing{cursor:col-resize; user-select:none}
     if (s.indexOf('data:') === 0) return DATA_RE.test(s) ? s : '';
     return B64_RE.test(s) ? 'data:image/png;base64,' + s : '';
   }
+  /* 'yt' | 'ig' | 'short'. A YouTube Short (a /shorts/ URL, or a video the digest
+     flagged quality_flag "short") renders on the portrait short-form card IG Reels
+     use, with an ember badge. srcFamily folds 'short' back into 'yt' for the
+     YouTube / Instagram source filter, so a Short never drops out of "YouTube". */
   function sourceOf(v) {
     var u = String((v && (v.url || v.webpage_url)) || '').toLowerCase();
-    return u.indexOf('instagram.') > -1 ? 'ig' : 'yt';
+    if (u.indexOf('instagram.') > -1) return 'ig';
+    if (u.indexOf('/shorts/') > -1) return 'short';
+    if (v && String(v.quality_flag || '').toLowerCase() === 'short') return 'short';
+    return 'yt';
   }
+  function srcFamily(src) { return src === 'short' ? 'yt' : src; }
+  var SRC_BADGE = { yt: 'YT', ig: 'IG · Reel', short: 'YT · Short' };
   /* griotwave topic hues — the timeline-dot / topic palette */
   var HUES = ['#3B9EFF', '#33D6A6', '#F5A524', '#FF6FB5', '#A78BFA'];
   function hue(i) { return HUES[i % HUES.length]; }
@@ -1191,9 +1200,9 @@ body.resizing{cursor:col-resize; user-select:none}
     var digest = v.digest || {};
     var done = !!(digest.core_takeaway || (digest.key_points && digest.key_points.length));
     return '<div class="vcard' + (picked ? ' pick' : '') + '" data-src="' + src + '" data-id="' + esc(v.id) + '" tabindex="0">' +
-      '<div class="thumb' + (src === 'ig' ? ' ig' : '') + '"' + (t ? ' style="background-image:url(' + t + ')"' : '') + '>' +
+      '<div class="thumb' + (src === 'yt' ? '' : ' ' + src) + '"' + (t ? ' style="background-image:url(' + t + ')"' : '') + '>' +
         (t ? '' : '<div class="glyph">' + esc(String(v.title || '').slice(0, 42)) + '</div>') +
-        '<div class="srcbadge ' + src + '">' + (src === 'ig' ? 'IG · Reel' : 'YT') + '</div>' +
+        '<div class="srcbadge ' + src + '">' + SRC_BADGE[src] + '</div>' +
         '<div class="sel"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 7"/></svg></div>' +
         '<div class="play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>' +
         (v.duration ? '<span class="dur">' + esc(v.duration) + '</span>' : '') +
@@ -1263,7 +1272,7 @@ body.resizing{cursor:col-resize; user-select:none}
       '<div class="num' + (ember ? ' ember' : '') + '">' + value + '</div>' +
       '<div class="sub">' + sub + '</div></div>';
   }
-  function srcFilter(v) { return currentSrc === 'all' || sourceOf(v) === currentSrc; }
+  function srcFilter(v) { return currentSrc === 'all' || srcFamily(sourceOf(v)) === currentSrc; }
 
   /* ═══ BY TOPIC ════════════════════════════════════════════════════════ */
   function renderByTopic() {
@@ -1738,7 +1747,7 @@ body.resizing{cursor:col-resize; user-select:none}
     var sess = $('#libSess').value, sort = $('#libSort').value;
     var list = libVideos.filter(function (v) {
       if (sess && v.session_title !== sess) return false;
-      if (currentSrc !== 'all' && sourceOf(v) !== currentSrc) return false;
+      if (currentSrc !== 'all' && srcFamily(sourceOf(v)) !== currentSrc) return false;
       if (!q) return true;
       return ((v.title || '') + ' ' + (v.channel || '')).toLowerCase().indexOf(q) > -1;
     });
@@ -1870,7 +1879,7 @@ body.resizing{cursor:col-resize; user-select:none}
     q = (q || '').trim().toLowerCase();
     $$('#graph .gnode').forEach(function (g) {
       var nm = g.getAttribute('data-name') || '', gs = g.getAttribute('data-src');
-      var okS = currentSrc === 'all' || gs === currentSrc;
+      var okS = currentSrc === 'all' || srcFamily(gs) === currentSrc;
       var okQ = !q || nm.indexOf(q) > -1;
       g.classList.toggle('graph-dim', !(okS && okQ));
     });

@@ -25,8 +25,10 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data"
+from _utils import DATA_DIR
+
+# Honours CLAUDE_PLUGIN_DATA like every other script (N1, 2026-10-15); was pinned to <repo>/data.
+DATA = Path(DATA_DIR)
 ASPECT = 9 / 16          # frames are captured 1280x720; a blank tile keeps the same shape
 GAP = 4
 BG = (24, 24, 28)
@@ -44,6 +46,19 @@ def resolve_session(arg):
         if (cand / "comparison_data.json").is_file():
             return cand / "comparison_data.json"
     raise FileNotFoundError(f"no comparison_data.json for {arg!r}")
+
+
+def data_root_for(session_json):
+    """The data dir a session's frame_ref paths are relative to.
+
+    A session stored as <root>/sessions/<name>/comparison_data.json resolves against <root>,
+    so an explicit path into another store still finds its own frames; anything else falls
+    back to DATA (CLAUDE_PLUGIN_DATA, else <repo>/data).
+    """
+    p = Path(session_json).resolve()
+    if p.parent.parent.name == "sessions":
+        return p.parents[2]
+    return DATA
 
 
 def _font(size):
@@ -89,6 +104,7 @@ def build_sheets(session_json, out_dir, per_sheet=9, tile_width=480):
     cols = math.ceil(math.sqrt(per_sheet))
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    root = data_root_for(session_json)
 
     by_video = {}
     for s in steps:
@@ -104,7 +120,7 @@ def build_sheets(session_json, out_dir, per_sheet=9, tile_width=480):
             tiles, rows = [], []
             for pos, s in enumerate(chunk):
                 ref = s.get("frame_ref")
-                tile, missing = make_tile(DATA / ref if ref else None,
+                tile, missing = make_tile(root / ref if ref else None,
                                           f"#{s.get('index')}  t{s.get('t_start')}", tile_width)
                 tiles.append(tile)
                 rows.append({"pos": pos, "row": pos // cols, "col": pos % cols,

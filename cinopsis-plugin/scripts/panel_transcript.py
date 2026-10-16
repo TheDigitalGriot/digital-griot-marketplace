@@ -106,12 +106,52 @@ SCROLL_MAX_PASSES = 90       # R7: enough for an 86-minute webinar
 # ---------------------------------------------------------------------------
 JS_PANEL_SELECTOR = ('ytd-engagement-panel-section-list-renderer'
                      '[target-id="engagement-panel-searchable-transcript"]')   # R3
+# R3 fallback (measured 2026-10-15 on To9ivUaqvgw): YouTube now opens the transcript in an
+# UNTARGETED engagement panel (target-id null, visibility EXPANDED) while the targeted one stays
+# HIDDEN. getPanel() takes the targeted panel only when it is EXPANDED, else the EXPANDED panel
+# that holds timestamp leaves - untargeted first, never the chapters (macro-markers) panel.
+JS_ANY_PANEL = 'ytd-engagement-panel-section-list-renderer'
+JS_EXPANDED = 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED'
+# Each row now carries an accessibility label after the timestamp:
+# "22:49 22 minutes, 49 seconds So, thanks for watching". Stripped only when its numbers
+# agree with the timestamp, so a line that merely starts with "2 minutes" survives.
+JS_DURATION_LABEL = r'^(?:(\d+) hours?,? ?)?(?:(\d+) minutes?,? ?)?(?:(\d+) seconds?)?\s*'
 
 # Shared helpers, prepended to every panel script. deepWalk PIERCES shadow roots.
 _JS_PRELUDE = r"""
 const PANEL_SEL = '%s';
+const ANY_PANEL = '%s';
+const EXPANDED = '%s';
 const TS = /^\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*$/;
-function getPanel() { return document.querySelector(PANEL_SEL); }
+const DUR = /%s/;
+function hasTsLeaf(p) {
+  let hit = false;
+  deepWalk(p, function (el) {
+    if (!hit && el.children.length === 0 && TS.test(el.textContent || '')) hit = true;
+  });
+  return hit;
+}
+function getPanel() {
+  const t = document.querySelector(PANEL_SEL);
+  if (t && t.getAttribute('visibility') === EXPANDED) return t;     // targeted panel first
+  let pick = null;
+  for (const p of Array.from(document.querySelectorAll(ANY_PANEL))) {
+    if (p === t || p.getAttribute('visibility') !== EXPANDED) continue;
+    const tid = p.getAttribute('target-id') || '';
+    if (tid.indexOf('macro-markers') > -1) continue;                // chapters carry timestamps too
+    if (!hasTsLeaf(p)) continue;
+    if (!tid) return p;                                             // the untargeted transcript panel
+    if (!pick) pick = p;
+  }
+  return pick || t;
+}
+function stripDuration(text, h, mi, s) {
+  const d = DUR.exec(text);
+  if (!d || !d[0].trim()) return text;
+  if ((d[1] !== undefined && +d[1] !== h) || (d[2] !== undefined && +d[2] !== mi) ||
+      (d[3] !== undefined && +d[3] !== s)) return text;
+  return text.slice(d[0].length);
+}
 function parentOf(el) {
   return el.parentElement || (el.getRootNode && el.getRootNode().host) || null;
 }
@@ -140,17 +180,18 @@ function collectRows(panel) {
       if (((cur.textContent || '').trim().length) > tsText.length + 2) { row = cur; break; }
     }
     if (!row) return;
-    const text = (row.textContent || '').replace(/\s+/g, ' ').trim()
-                   .replace(/^\d{1,2}:\d{2}(:\d{2})?\s*/, '');
+    const hh = (m[3] !== undefined) ? +m[1] : 0;
+    const mm = (m[3] !== undefined) ? +m[2] : +m[1];
+    const ss = (m[3] !== undefined) ? +m[3] : +m[2];
+    const text = stripDuration((row.textContent || '').replace(/\s+/g, ' ').trim()
+                   .replace(/^\d{1,2}:\d{2}(:\d{2})?\s*/, ''), hh, mm, ss);
     if (!text) return;                                    // skip empty rows
-    const start = (m[3] !== undefined)
-      ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3])
-      : (+m[1]) * 60 + (+m[2]);
+    const start = hh * 3600 + mm * 60 + ss;
     rows.push([start, text]);
   });
   return rows;
 }
-""" % JS_PANEL_SELECTOR
+""" % (JS_PANEL_SELECTOR, JS_ANY_PANEL, JS_EXPANDED, JS_DURATION_LABEL)
 
 # R1 - expand the description.
 JS_EXPAND = "const e=document.querySelector('#expand'); if(e){e.click(); return true;} return false;"

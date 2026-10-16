@@ -39,7 +39,7 @@ from _utils import find_ytdlp, get_env, DATA_DIR, canonical_data_dir, resolve_co
 
 PLAYLISTS_FILE = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", Path(__file__).parent.parent)) / "data" / "playlists.json"
 SEEN_FILE = DATA_DIR / "playlist_seen.json"
-DEFAULT_MAX_NEW = int(os.environ.get("CINOPSIS_MAX_NEW_PER_RUN", "12"))
+DEFAULT_MAX_NEW = int(os.environ.get("CINOPSIS_MAX_NEW_PER_RUN", "6"))
 
 
 def log(msg):
@@ -324,11 +324,12 @@ def main():
     ap.add_argument("--playlist-end", type=int, default=None,
                     help="Cap the flat-playlist scan at N entries (logged when applied)")
     ap.add_argument("--all", action="store_true",
-                    help="Force the full list — ignore the seen manifest")
+                    help="Force the full list — ignore the seen manifest. WARNING: this is the "
+                         "un-paced escape; it bypasses --max-new and surfaces the whole backlog at once")
     ap.add_argument("--seed", action="store_true",
                     help="Seed the manifest from the current playlist and exit (surface nothing)")
     ap.add_argument("--max-new", type=int, default=None,
-                    help="Surface at most N net-new per run (default 12; env "
+                    help="Surface at most N net-new per run (default 6; env "
                          "CINOPSIS_MAX_NEW_PER_RUN). The backlog drains ~N/run -- never bulk.")
     ap.add_argument("--cookies", default=None,
                     help="Path to a cookies.txt (Netscape format) so PRIVATE/unlisted playlists "
