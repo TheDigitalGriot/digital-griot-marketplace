@@ -27,7 +27,8 @@ from get_transcript import fetch_transcript, format_transcript, integrity_gate, 
 from chrome_session import ChromeProfileLockedError
 from capture_frames import (extract_video_id, capture_frame as _capture_frame,
                             capture_session_frames, capture_session_frames_local,
-                            resolve_session_file, BATCH_CHUNK, DATA_DIR, ENGINES as _FRAME_ENGINES)
+                            resolve_session_file, BATCH_CHUNK, DATA_DIR, ENGINES as _FRAME_ENGINES,
+                            default_engine as _default_frames_engine)
 from compare_videos import parse_urls, process_video, build_comparison_data, save_session
 from compare_server import create_app
 
@@ -390,13 +391,16 @@ def capture_frame(video_id: str, timestamp_seconds: int) -> str:
 
 
 @mcp.tool()
-def harvest_frames(session: str, engine: str = "stream") -> str:
+def harvest_frames(session: str, engine: str | None = None) -> str:
     """Paired harvest pass: write a frame_ref onto every workflow step of a session.
 
-    engine="stream" (default, original) seeks a stream URL once per timestamp.
-    engine="local" downloads each video ONCE behind the same frames gate, cuts every
-    step t_start and key_moment frame with the lifted extract_at_timestamps engine,
-    and deletes the video (capture_frames.py --engine local). A video is one slice.
+    engine defaults to "local". Choose with engine= or the CINOPSIS_FRAMES_ENGINE env
+    var (stream|local); an explicit engine= wins (capture_frames.default_engine).
+    engine="local" downloads each video ONCE into data/media_runs behind the same
+    frames gate, cuts every step t_start and key_moment frame with the lifted
+    extract_at_timestamps engine, and deletes the video after. A video is one slice.
+    engine="stream" makes one stream-URL ask per video then seeks it over the network,
+    no download. The result summary reports the engine actually used.
 
     Calls capture_session_frames() per video, in BATCH_CHUNK slices, and checks the
     ratelimit "frames" gate BETWEEN slices. When the gate is cooling it stops,
@@ -415,6 +419,7 @@ def harvest_frames(session: str, engine: str = "stream") -> str:
     is reported as `malformed`, never counted as a capture failure.
     """
     import ratelimit
+    engine = _default_frames_engine(engine)
     if engine not in _FRAME_ENGINES:
         return json.dumps({"status": "failed", "note": f"engine must be one of {list(_FRAME_ENGINES)}"})
     data_file = resolve_session_file(session)

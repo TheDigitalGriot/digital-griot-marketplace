@@ -70,8 +70,8 @@ On Cowork there is no Bash tool, so the same operations run through a local-stdi
 - `get_transcript(video_id, sources)` — fetch a transcript through the selected sources (see "Transcript sources")
 - `compare_videos(urls, title, sources)` — build a comparison session (then fill analysis + per-video digest)
 - `launch_viewer(session_id, port)` — start the dashboard, returns a localhost URL to open
-- `capture_frame(video_id, timestamp_seconds)` — grab a frame
-- `harvest_frames(session)` — write a frame_ref onto every workflow step of a session
+- `capture_frame(video_id, timestamp_seconds)` — grab a frame (always the stream engine: one frame per call, never a download)
+- `harvest_frames(session, engine)` — write a frame_ref onto every workflow step of a session. `engine` defaults to `local` (one download per video into `data/media_runs`, deleted after); `stream` makes one stream-URL ask then seeks over the network, no download. Choose with `engine=` or `CINOPSIS_FRAMES_ENGINE=stream|local`; the explicit argument wins. `capture_frames.py --session` follows the same rule via `--engine`
 - `doctor(json_output, live)` — which transcript sources and Agent-Reach channels (all 16) are ready on this instance, and what each one needs
 - `get_description(video_id)` — write `description_<id>.txt` + `links_<id>.json` (github / gitlab / huggingface)
 - `watch_video(source, question, engine, detail, start, end)` — the Watch verb: frames + transcript, or Gemini's answer

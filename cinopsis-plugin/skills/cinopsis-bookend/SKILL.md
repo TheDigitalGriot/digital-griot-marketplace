@@ -45,8 +45,24 @@ Read the commit subjects, not just the count. Cinopsis's history uses convention
 - a documented breaking change to a tool signature, the MCP surface, or the on-disk store -> **MAJOR**
 
 Present the analysis and the suggestion, and get an explicit confirmation or an override before
-moving anything. Running headless: use the version given in the prompt; if none was given, **halt**
-and say so. Never pick a version unattended.
+moving anything. Never pick a version unattended.
+
+**Running headless** (`claude -p`, a stage contract - there is nobody to confirm with), the version
+must arrive explicitly, as `--version X.Y.Z` in the invoking prompt/arguments or as the env var
+`CINOPSIS_BOOKEND_VERSION`. Resolve it through the gate before moving anything:
+
+```bash
+python scripts/bookend_version.py --version X.Y.Z     # or: CINOPSIS_BOOKEND_VERSION=X.Y.Z python scripts/bookend_version.py
+```
+
+- `BOOKEND_VERSION_OK <v>` (exit 0) - proceed with `<v>`; the flag wins over the env var.
+- `BOOKEND_NEEDS_VERSION` (exit 3) - neither was given: **halt** and report that token. Do not suggest-and-apply.
+- `BOOKEND_VERSION_REJECTED` (exit 2) - not SemVer, or not greater than the last tag: **halt** and report it.
+
+> **Resources - cloud / device resolution (plugin variant):** read `scripts/bookend_version.py` via
+> `PLUGIN_ROOT/scripts/bookend_version.py`; execute it device-side (Windows-MCP PowerShell or
+> `claude.exe -p` in the repo) - Cowork has no Bash tool. If the bridge is down, say so and apply the
+> same three rules by hand from `git describe --tags --abbrev=0`.
 
 ## Step 3: Move EVERY version declaration together
 

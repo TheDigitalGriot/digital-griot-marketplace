@@ -18,7 +18,8 @@ An **audit gate**, then bookend, then release - back to back, in the only order 
    not skim to the summary line.
 1. **Bookend** - invoke **`cinopsis-bookend`**. Analyze the commits since the last tag, agree the
    semantic bump, move all three version declarations, write the CHANGELOG section. **The version
-   is decided here** and carried into the release unchanged.
+   is decided here** and carried into the release unchanged. Headless, pass it through as
+   `--version X.Y.Z` (or `CINOPSIS_BOOKEND_VERSION`); bookend's `BOOKEND_NEEDS_VERSION` halts the ceremony.
 2. **Release** - invoke **`cinopsis-release`**. Commit, tag, push, sync the shared marketplace
    mirror, **re-run the audit to prove the mirror actually moved**, and create the GitHub release
    (notes only, no assets).

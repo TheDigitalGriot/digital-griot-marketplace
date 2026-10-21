@@ -114,7 +114,14 @@ Preferred, from any surface with the MCP server: the **`harvest_frames`** tool.
 harvest_frames(session="<session_dir_name>")
 ```
 
-It calls `capture_session_frames()` for each video in `BATCH_CHUNK` (20) slices, checks
+**Engine.** `engine` defaults to `local`: each video is downloaded ONCE into `data/media_runs`
+behind the same frames gate, every step frame is cut from it as one slice, and the video is
+deleted after. `engine="stream"` makes one stream-URL ask per video and seeks it over the
+network, no download. Choose with `harvest_frames(session, engine=...)` or
+`CINOPSIS_FRAMES_ENGINE=stream|local`; the explicit argument wins. One-off `capture_frame`
+stays on the stream engine.
+
+On the stream engine it calls `capture_session_frames()` for each video in `BATCH_CHUNK` (20) slices, checks
 `ratelimit.status()` before every slice, and rewrites the session file after every
 slice. It returns `{captured, failed, deferred, remaining, malformed, stopped_by_gate,
 seconds_left, frames_dir}` plus a `warning` when the frames directory differs from the
@@ -125,7 +132,7 @@ CLI equivalent (no gate-aware batching - the one-shot form):
 
 ```bash
 cd ${CLAUDE_PLUGIN_ROOT}
-python scripts/capture_frames.py --session SESSION --json
+python scripts/capture_frames.py --session SESSION --json   # --engine stream|local, default local
 ```
 
 Use the CLI only for a short session. For a 90-minute tutorial (80-150 steps) use the

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from _utils import find_ytdlp, find_ffmpeg, get_env, DATA_DIR
@@ -78,10 +79,12 @@ def build_ffmpeg_cmd(stream_url, timestamp_seconds, output_path):
     ]
 
 
-def capture_frame(video_id, timestamp_seconds, output_dir=None):
+def capture_frame(video_id, timestamp_seconds, output_dir=None, stream_url=None):
     """
     Capture a single frame from a YouTube video at the given timestamp.
     Returns the frame as a base64-encoded PNG string, or None on failure.
+    stream_url: an already-resolved URL (batch callers resolve once per video);
+    when None the URL is resolved here, exactly as single-frame callers expect.
     """
     output_dir = Path(output_dir) if output_dir else DATA_DIR / "frames"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -91,11 +94,12 @@ def capture_frame(video_id, timestamp_seconds, output_dir=None):
     if output_path.exists():
         return base64.b64encode(output_path.read_bytes()).decode("utf-8")
 
-    print(f"  Getting stream URL for {video_id}...", flush=True)
-    stream_url = get_stream_url(video_id)
-    if not stream_url:
-        print(f"  Failed to get stream URL for {video_id}")
-        return None
+    if stream_url is None:
+        print(f"  Getting stream URL for {video_id}...", flush=True)
+        stream_url = get_stream_url(video_id)
+        if not stream_url:
+            print(f"  Failed to get stream URL for {video_id}")
+            return None
 
     print(f"  Capturing frame at {format_timestamp(timestamp_seconds)}...", flush=True)
     cmd = build_ffmpeg_cmd(stream_url, timestamp_seconds, output_path)
@@ -115,10 +119,40 @@ def capture_frame(video_id, timestamp_seconds, output_dir=None):
 
 
 def capture_frames_batch(video_id, timestamps, output_dir=None):
-    """Capture multiple frames for a single video. Returns list of {timestamp, base64}."""
+    """Capture multiple frames for a single video. Returns list of {timestamp, base64}.
+
+    The stream URL is resolved at most once per batch, lazily at the first
+    uncached frame, and re-resolved at most once more if ffmpeg fails on it
+    (the URL may have expired) - never one yt-dlp call per frame (drift 371).
+    """
+    frames_dir = Path(output_dir) if output_dir else DATA_DIR / "frames"
     results = []
+    stream_url = None
+    resolves = 0
     for ts in timestamps:
-        b64 = capture_frame(video_id, ts, output_dir)
+        cached = (frames_dir / f"{video_id}_{int(ts)}.png").exists()
+        if not cached and stream_url is None:
+            # A failed or gated resolve is not re-asked for every remaining frame
+            if resolves:
+                results.append({"timestamp": ts, "base64": None})
+                continue
+            print(f"  Getting stream URL for {video_id}...", flush=True)
+            stream_url = get_stream_url(video_id)
+            resolves += 1
+            if not stream_url:
+                print(f"  Failed to get stream URL for {video_id}")
+                results.append({"timestamp": ts, "base64": None})
+                continue
+        b64 = capture_frame(video_id, ts, output_dir, stream_url=stream_url)
+        if b64 is None and not cached and resolves < 2:
+            # ffmpeg failed on the handed-in URL: it may have expired, re-resolve once
+            print(f"  Re-resolving stream URL for {video_id}...", flush=True)
+            stream_url = get_stream_url(video_id)
+            resolves += 1
+            if stream_url:
+                b64 = capture_frame(video_id, ts, output_dir, stream_url=stream_url)
+            else:
+                print(f"  Failed to get stream URL for {video_id}")
         results.append({"timestamp": ts, "base64": b64})
     return results
 
@@ -247,9 +281,11 @@ def capture_session_frames(comparison_data, output_dir=None, verbose=True):
 
 # ---------------------------------------------------------------------------
 # --engine local: the per-step engine (Gavin's ruling, cc5-batch1 stage 0).
-# The stream engine above resolves a stream URL and seeks it ONCE PER TIMESTAMP, so
-# a 120-step video costs 120 yt-dlp URL resolutions against the frames gate. The
-# local engine downloads each video ONCE (media.download.download_url, 720p cap,
+# The stream engine above resolves the stream URL ONCE PER BATCH (lazily, at the
+# first uncached frame, and re-asked at most once if ffmpeg fails on an expired
+# URL). Session capture feeds it batches of BATCH_CHUNK, so a 120-step video costs
+# 6 yt-dlp URL asks against the frames gate, not 120. The local engine below is
+# the default (CINOPSIS_FRAMES_ENGINE or --engine choose) and downloads each video ONCE (media.download.download_url, 720p cap,
 # behind the same "frames" gate), lets the lifted frames.extract_at_timestamps cut
 # exactly one frame at every step t_start and key_moment timestamp, writes
 # frames/<video_id>_<int t>.png, sets frame_ref as a relative path, and deletes the
@@ -257,6 +293,30 @@ def capture_session_frames(comparison_data, output_dir=None, verbose=True):
 # satisfy the other's cache.
 # ---------------------------------------------------------------------------
 ENGINES = ("stream", "local")
+DEFAULT_ENGINE = "local"   # drift 371 stage B (Gavin's ruling 2026-10-21): local is the default
+ENGINE_ENV = "CINOPSIS_FRAMES_ENGINE"
+
+
+def default_engine(explicit=None):
+    """The ONE chooser for the session frames engine (CLI --session and MCP harvest_frames).
+
+    An explicit value always wins and is returned as given (the caller validates it).
+    Otherwise CINOPSIS_FRAMES_ENGINE (stream or local, case-insensitive, trimmed);
+    otherwise "local". An unrecognised env value warns once on stderr and falls back
+    to "local". The single-frame paths (compare_server /api/screenshot, MCP
+    capture_frame) stay on the stream engine and never read this.
+    """
+    if explicit is not None:
+        return explicit
+    raw = os.environ.get(ENGINE_ENV)
+    if raw is None or not raw.strip():
+        return DEFAULT_ENGINE
+    value = raw.strip().lower()
+    if value in ENGINES:
+        return value
+    print(f"warning: {ENGINE_ENV}={raw!r} is not one of {ENGINES}; using {DEFAULT_ENGINE!r}",
+          file=sys.stderr)
+    return DEFAULT_ENGINE
 LOCAL_RESOLUTION = 1280   # frames are read back for UI labels: keep the 720p source legible
 
 
@@ -444,8 +504,11 @@ def resolve_session_file(session):
     return DATA_DIR / "sessions" / session / "comparison_data.json"
 
 
-def capture_session_file(session, output_dir=None, verbose=True, engine="stream"):
-    """Load a session, capture every step frame, write frame_ref back to disk."""
+def capture_session_file(session, output_dir=None, verbose=True, engine=None):
+    """Load a session, capture every step frame, write frame_ref back to disk.
+
+    engine=None lets default_engine() decide (CINOPSIS_FRAMES_ENGINE, else local)."""
+    engine = default_engine(engine)
     if engine not in ENGINES:
         raise ValueError(f"engine must be one of {ENGINES}")
     data_file = resolve_session_file(session)
@@ -541,9 +604,11 @@ def main():
                         help="Let Watch's frame engine pick frames across the whole video "
                              "(keyframes = I-frames, scene = scene cuts) instead of --timestamps")
     parser.add_argument("--max-frames", type=int, default=50, help="Cap for --select (default 50)")
-    parser.add_argument("--engine", choices=ENGINES, default="stream",
-                        help="--session engine: stream = seek a stream URL per timestamp (original); "
-                             "local = download each video once, cut every step frame, delete the video")
+    parser.add_argument("--engine", choices=ENGINES, default=None,
+                        help="--session engine, default local. Choose with this flag or the "
+                             f"{ENGINE_ENV} env var (stream|local); the flag wins. "
+                             "stream = one stream-URL ask then network seeks, no download; "
+                             "local = one download per video into data/media_runs, deleted after")
     args = parser.parse_args()
 
     if args.select:
